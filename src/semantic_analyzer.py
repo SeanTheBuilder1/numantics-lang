@@ -1169,7 +1169,8 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                 pass
             elif ModifierClass.PARITY in rhs_class:
                 pass
-            return Type(builtin=new_builtin, modifiers=new_modifiers)
+            tree.data.type = Type(builtin=new_builtin, modifiers=new_modifiers)
+            return tree.data.type
         elif operator in [
             ASTOperator.NOT_EQUAL_OPERATOR,
             ASTOperator.EQUAL_OPERATOR,
