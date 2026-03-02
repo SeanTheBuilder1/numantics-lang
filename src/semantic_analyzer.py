@@ -1,6 +1,7 @@
 from __future__ import annotations
 from semantic_types import (
     BuiltInTypes,
+    ExclusiveUnit,
     Function,
     ModifierClass,
     ModifierTypes,
@@ -313,8 +314,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
         lhs_type = resolveExpression(lhs, scope)
         rhs_type = resolveExpression(rhs, scope)
         operator = tree.data.operator
-        new_builtin: BuiltInTypes = BuiltInTypes.VOID_TYPE
-        new_modifiers: list[ModifierTypes] = []
+        new_type = Type(builtin=BuiltInTypes.VOID_TYPE, modifiers=[])
 
         if (
             lhs_type.builtin == BuiltInTypes.VOID_TYPE
@@ -336,7 +336,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                         f"ERROR: Invalid rhs operand {rhs_type} must be string type"
                     )
                 else:
-                    new_builtin = BuiltInTypes.STRING_TYPE
+                    new_type.builtin = BuiltInTypes.STRING_TYPE
             elif lhs_type.builtin in num_types or rhs_type.builtin in num_types:
                 for int_type in num_types:
                     if lhs_type.builtin == int_type or rhs_type.builtin == int_type:
@@ -349,24 +349,49 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                                 f"ERROR: Invalid rhs operand {rhs_type} must be numerical type"
                             )
                         else:
-                            new_builtin = int_type
+                            new_type.builtin = int_type
                             break
 
             lhs_class = getModifierClass(lhs_type.modifiers)
             rhs_class = getModifierClass(rhs_type.modifiers)
 
             # EXCLUSIVE CLASS
-            for modifier in modifier_priority_table.keys():
-                if modifier not in lhs_class and modifier not in rhs_class:
-                    continue
-                if modifier not in lhs_class or modifier not in rhs_class:
+            if bool(lhs_type.exclusive) ^ bool(rhs_type.exclusive):
+                nonFatalError(
+                    f"ERROR: mismatched exclusive modifier types {lhs_type.exclusive} and {rhs_type.exclusive}"
+                )
+            elif lhs_type.exclusive and rhs_type.exclusive:
+                if lhs_type.exclusive.unit_class != rhs_type.exclusive.unit_class:
                     nonFatalError(
-                        f"ERROR: mismatched exclusive modifier types {lhs_type} and {rhs_type}"
+                        f"ERROR: mismatched exclusive modifier types {lhs_type.exclusive} and {rhs_type.exclusive}"
                     )
-                    break
-                for type in modifier_priority_table[modifier]:
-                    if type in lhs_type.modifiers or type in rhs_type.modifiers:
-                        new_modifiers.append(type)
+                for type in modifier_priority_table[lhs_type.exclusive.unit_class]:
+                    if (
+                        type == lhs_type.exclusive.unit
+                        or type == rhs_type.exclusive.unit
+                    ):
+                        if (
+                            lhs_type.exclusive.unit_class == ModifierClass.TEMP
+                            and lhs_type.exclusive.unit != rhs_type.exclusive.unit
+                        ):
+                            nonFatalError(
+                                f"ERROR: addition of temperatures must have matching units {lhs_type.exclusive.unit} and {rhs_type.exclusive.unit}"
+                            )
+                            new_type.builtin = BuiltInTypes.VOID_TYPE
+                            break
+
+                        dest_type = (
+                            lhs_type if type == lhs_type.exclusive.unit else rhs_type
+                        )
+                        src_type = (
+                            rhs_type if type == lhs_type.exclusive.unit else lhs_type
+                        )
+                        if unitConversionResultsInFloat(dest_type, src_type):
+                            new_type.builtin = BuiltInTypes.FLOAT_TYPE
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=type, unit_class=lhs_type.exclusive.unit_class
+                        )
+                        new_type.modifiers.append(type)
                         break
 
             # INCLUSIVE CLASS
@@ -375,12 +400,12 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     ModifierTypes.POSITIVE_TYPE in lhs_type.modifiers
                     and ModifierTypes.POSITIVE_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.POSITIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.POSITIVE_TYPE)
                 elif (
                     ModifierTypes.NEGATIVE_TYPE in lhs_type.modifiers
                     and ModifierTypes.NEGATIVE_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.NEGATIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.NEGATIVE_TYPE)
                 else:
                     pass
             elif ModifierClass.SIGN in lhs_class:
@@ -403,14 +428,14 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     ModifierTypes.EVEN_TYPE in lhs_type.modifiers
                     and ModifierTypes.EVEN_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.EVEN_TYPE)
+                    new_type.modifiers.append(ModifierTypes.EVEN_TYPE)
                 else:
-                    new_modifiers.append(ModifierTypes.ODD_TYPE)
+                    new_type.modifiers.append(ModifierTypes.ODD_TYPE)
             elif ModifierClass.PARITY in lhs_class:
                 pass
             elif ModifierClass.PARITY in rhs_class:
                 pass
-            tree.data.type = type(builtin=new_builtin, modifiers=new_modifiers)
+            tree.data.type = new_type
             return tree.data.type
 
         elif operator == ASTOperator.SUB_OPERATOR:
@@ -428,7 +453,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                             )
                             break
                         else:
-                            new_builtin = int_type
+                            new_type.builtin = int_type
                             break
             else:
                 nonFatalError(
@@ -439,17 +464,32 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
             rhs_class = getModifierClass(rhs_type.modifiers)
 
             # EXCLUSIVE CLASS
-            for modifier in modifier_priority_table.keys():
-                if modifier not in lhs_class and modifier not in rhs_class:
-                    continue
-                if modifier not in lhs_class or modifier not in rhs_class:
+            if bool(lhs_type.exclusive) ^ bool(rhs_type.exclusive):
+                nonFatalError(
+                    f"ERROR: mismatched exclusive modifier types {lhs_type.exclusive} and {rhs_type.exclusive}"
+                )
+            elif lhs_type.exclusive and rhs_type.exclusive:
+                if lhs_type.exclusive.unit_class != rhs_type.exclusive.unit_class:
                     nonFatalError(
-                        f"ERROR: mismatched exclusive modifier types {lhs_type} and {rhs_type}"
+                        f"ERROR: mismatched exclusive modifier types {lhs_type.exclusive} and {rhs_type.exclusive}"
                     )
-                    break
-                for type in modifier_priority_table[modifier]:
-                    if type in lhs_type.modifiers or type in rhs_type.modifiers:
-                        new_modifiers.append(type)
+                for type in modifier_priority_table[lhs_type.exclusive.unit_class]:
+                    if (
+                        type == lhs_type.exclusive.unit
+                        or type == rhs_type.exclusive.unit
+                    ):
+                        dest_type = (
+                            lhs_type if type == lhs_type.exclusive.unit else rhs_type
+                        )
+                        src_type = (
+                            rhs_type if type == lhs_type.exclusive.unit else lhs_type
+                        )
+                        if unitConversionResultsInFloat(dest_type, src_type):
+                            new_type.builtin = BuiltInTypes.FLOAT_TYPE
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=type, unit_class=lhs_type.exclusive.unit_class
+                        )
+                        new_type.modifiers.append(type)
                         break
 
             # INCLUSIVE CLASS
@@ -486,14 +526,14 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     ModifierTypes.EVEN_TYPE in lhs_type.modifiers
                     and ModifierTypes.EVEN_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.EVEN_TYPE)
+                    new_type.modifiers.append(ModifierTypes.EVEN_TYPE)
                 else:
-                    new_modifiers.append(ModifierTypes.ODD_TYPE)
+                    new_type.modifiers.append(ModifierTypes.ODD_TYPE)
             elif ModifierClass.PARITY in lhs_class:
                 pass
             elif ModifierClass.PARITY in rhs_class:
                 pass
-            tree.data.type = Type(builtin=new_builtin, modifiers=new_modifiers)
+            tree.data.type = new_type
             return tree.data.type
         elif operator == ASTOperator.MULT_OPERATOR:
             if lhs_type.builtin in num_types or rhs_type.builtin in num_types:
@@ -510,7 +550,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                             )
                             break
                         else:
-                            new_builtin = int_type
+                            new_type.builtin = int_type
                             break
             else:
                 nonFatalError(
@@ -520,8 +560,13 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
             lhs_class = getModifierClass(lhs_type.modifiers)
             rhs_class = getModifierClass(rhs_type.modifiers)
 
-            lhs_exclusive = getExclusiveClass(lhs_class)
-            rhs_exclusive = getExclusiveClass(rhs_class)
+            lhs_exclusive = (
+                lhs_type.exclusive.unit_class if lhs_type.exclusive else None
+            )
+            rhs_exclusive = (
+                rhs_type.exclusive.unit_class if rhs_type.exclusive else None
+            )
+
             # EXCLUSIVE CLASS
             if not lhs_exclusive and not rhs_exclusive:
                 pass
@@ -530,31 +575,61 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                 lhs_exclusive == ModifierClass.VELOCITY
                 and rhs_exclusive == ModifierClass.TIME
             ):
+                second_unit = createUnitOnlyType(ModifierTypes.SECOND_TYPE)
                 if ModifierTypes.MPS_TYPE in lhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.METER_TYPE)
+                    new_type.modifiers.append(ModifierTypes.METER_TYPE)
+                    new_type.exclusive = ExclusiveUnit(
+                        unit=ModifierTypes.METER_TYPE, unit_class=ModifierClass.DISTANCE
+                    )
                 elif ModifierTypes.FPS_TYPE in lhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.FT_TYPE)
+                    new_type.modifiers.append(ModifierTypes.FT_TYPE)
+                    new_type.exclusive = ExclusiveUnit(
+                        unit=ModifierTypes.FT_TYPE, unit_class=ModifierClass.DISTANCE
+                    )
+                if unitConversionResultsInFloat(second_unit, rhs_type):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
             elif (
                 lhs_exclusive == ModifierClass.TIME
                 and rhs_exclusive == ModifierClass.VELOCITY
             ):
+                second_unit = createUnitOnlyType(ModifierTypes.SECOND_TYPE)
                 if ModifierTypes.MPS_TYPE in rhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.METER_TYPE)
+                    new_type.modifiers.append(ModifierTypes.METER_TYPE)
+                    new_type.exclusive = ExclusiveUnit(
+                        unit=ModifierTypes.METER_TYPE, unit_class=ModifierClass.DISTANCE
+                    )
                 elif ModifierTypes.FPS_TYPE in rhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.FT_TYPE)
+                    new_type.modifiers.append(ModifierTypes.FT_TYPE)
+                    new_type.exclusive = ExclusiveUnit(
+                        unit=ModifierTypes.FT_TYPE, unit_class=ModifierClass.DISTANCE
+                    )
+                if unitConversionResultsInFloat(second_unit, lhs_type):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
 
             elif (
                 lhs_exclusive == ModifierClass.ACCELERATION
                 and rhs_exclusive == ModifierClass.TIME
             ):
+                second_unit = createUnitOnlyType(ModifierTypes.SECOND_TYPE)
                 if ModifierTypes.MPS2_TYPE in lhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.MPS_TYPE)
+                    new_type.modifiers.append(ModifierTypes.MPS_TYPE)
+                    new_type.exclusive = ExclusiveUnit(
+                        unit=ModifierTypes.MPS_TYPE, unit_class=ModifierClass.VELOCITY
+                    )
+                if unitConversionResultsInFloat(second_unit, rhs_type):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
             elif (
                 lhs_exclusive == ModifierClass.TIME
                 and rhs_exclusive == ModifierClass.ACCELERATION
             ):
+                second_unit = createUnitOnlyType(ModifierTypes.SECOND_TYPE)
                 if ModifierTypes.MPS2_TYPE in rhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.MPS_TYPE)
+                    new_type.modifiers.append(ModifierTypes.MPS_TYPE)
+                    new_type.exclusive = ExclusiveUnit(
+                        unit=ModifierTypes.MPS_TYPE, unit_class=ModifierClass.VELOCITY
+                    )
+                if unitConversionResultsInFloat(second_unit, lhs_type):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
 
             elif (
                 lhs_exclusive == ModifierClass.PERCENT
@@ -562,18 +637,38 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
             ):
                 for type in modifier_priority_table[lhs_exclusive]:
                     if type in lhs_type.modifiers or type in rhs_type.modifiers:
-                        new_modifiers.append(type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=type, unit_class=ModifierClass.PERCENT
+                        )
+                        new_type.modifiers.append(type)
                         break
-            elif not lhs_exclusive and rhs_exclusive == ModifierClass.PERCENT:
-                for type in modifier_priority_table[rhs_exclusive]:
-                    if type in rhs_type.modifiers:
-                        new_modifiers.append(type)
-                        break
-            elif lhs_exclusive == ModifierClass.PERCENT and not rhs_exclusive:
-                for type in modifier_priority_table[lhs_exclusive]:
-                    if type in lhs_type.modifiers:
-                        new_modifiers.append(type)
-                        break
+                new_type.builtin = BuiltInTypes.FLOAT_TYPE
+            elif (
+                lhs_exclusive != ModifierClass.PERCENT
+                and rhs_exclusive == ModifierClass.PERCENT
+            ):
+                if lhs_exclusive:
+                    for type in modifier_priority_table[lhs_exclusive]:
+                        if type in rhs_type.modifiers:
+                            new_type.exclusive = ExclusiveUnit(
+                                unit=type, unit_class=lhs_exclusive
+                            )
+                            new_type.modifiers.append(type)
+                            break
+                new_type.builtin = BuiltInTypes.FLOAT_TYPE
+            elif (
+                lhs_exclusive == ModifierClass.PERCENT
+                and rhs_exclusive != ModifierClass.PERCENT
+            ):
+                if rhs_exclusive:
+                    for type in modifier_priority_table[rhs_exclusive]:
+                        if type in rhs_type.modifiers:
+                            new_type.exclusive = ExclusiveUnit(
+                                unit=type, unit_class=rhs_exclusive
+                            )
+                            new_type.modifiers.append(type)
+                            break
+                new_type.builtin = BuiltInTypes.FLOAT_TYPE
 
             elif (
                 lhs_exclusive == ModifierClass.DISTANCE
@@ -581,7 +676,15 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
             ):
                 for type in modifier_priority_table[lhs_exclusive]:
                     if type in lhs_type.modifiers or type in rhs_type.modifiers:
-                        new_modifiers.append(distance_to_area[type])
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=distance_to_area[type], unit_class=ModifierClass.AREA
+                        )
+                        new_type.modifiers.append(distance_to_area[type])
+                        dest_unit = createUnitOnlyType(type)
+                        if unitConversionResultsInFloat(
+                            dest_unit, lhs_type
+                        ) or unitConversionResultsInFloat(dest_unit, rhs_type):
+                            new_type.builtin = BuiltInTypes.FLOAT_TYPE
                         break
 
             elif (
@@ -592,10 +695,46 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     distance_type = modifier_priority_table[lhs_exclusive][i]
                     area_type = modifier_priority_table[rhs_exclusive][i]
                     if distance_type in lhs_type.modifiers:
-                        new_modifiers.append(distance_or_area_to_volume[distance_type])
+                        volume_type = distance_or_area_to_volume[distance_type]
+                        new_type.modifiers.append(volume_type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=volume_type, unit_class=ModifierClass.VOLUME
+                        )
+                        if volume_type == ModifierTypes.KL_TYPE:
+                            meter_type = createUnitOnlyType(ModifierTypes.METER_TYPE)
+                            meter2_type = createUnitOnlyType(ModifierTypes.METER2_TYPE)
+                            if unitConversionResultsInFloat(
+                                meter_type, lhs_type
+                            ) or unitConversionResultsInFloat(meter2_type, rhs_type):
+                                new_type.builtin = BuiltInTypes.FLOAT_TYPE
+                        elif volume_type == ModifierTypes.ML_TYPE:
+                            cm_type = createUnitOnlyType(ModifierTypes.CM_TYPE)
+                            cm2_type = createUnitOnlyType(ModifierTypes.CM2_TYPE)
+                            if unitConversionResultsInFloat(
+                                cm_type, lhs_type
+                            ) or unitConversionResultsInFloat(cm2_type, rhs_type):
+                                new_type.builtin = BuiltInTypes.FLOAT_TYPE
                         break
-                    if area_type in rhs_type.modifiers:
-                        new_modifiers.append(distance_or_area_to_volume[area_type])
+                    elif area_type in rhs_type.modifiers:
+                        volume_type = distance_or_area_to_volume[area_type]
+                        new_type.modifiers.append(volume_type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=volume_type, unit_class=ModifierClass.VOLUME
+                        )
+                        if volume_type == ModifierTypes.KL_TYPE:
+                            meter_type = createUnitOnlyType(ModifierTypes.METER_TYPE)
+                            meter2_type = createUnitOnlyType(ModifierTypes.METER2_TYPE)
+                            if unitConversionResultsInFloat(
+                                meter_type, lhs_type
+                            ) or unitConversionResultsInFloat(meter2_type, rhs_type):
+                                new_type.builtin = BuiltInTypes.FLOAT_TYPE
+                        elif volume_type == ModifierTypes.ML_TYPE:
+                            cm_type = createUnitOnlyType(ModifierTypes.CM_TYPE)
+                            cm2_type = createUnitOnlyType(ModifierTypes.CM2_TYPE)
+                            if unitConversionResultsInFloat(
+                                cm_type, lhs_type
+                            ) or unitConversionResultsInFloat(cm2_type, rhs_type):
+                                new_type.builtin = BuiltInTypes.FLOAT_TYPE
                         break
             elif (
                 lhs_exclusive == ModifierClass.AREA
@@ -605,31 +744,88 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     area_type = modifier_priority_table[lhs_exclusive][i]
                     distance_type = modifier_priority_table[rhs_exclusive][i]
                     if area_type in lhs_type.modifiers:
-                        new_modifiers.append(distance_or_area_to_volume[area_type])
+                        volume_type = distance_or_area_to_volume[distance_type]
+                        new_type.modifiers.append(volume_type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=volume_type, unit_class=ModifierClass.VOLUME
+                        )
+                        if volume_type == ModifierTypes.KL_TYPE:
+                            meter_type = createUnitOnlyType(ModifierTypes.METER_TYPE)
+                            meter2_type = createUnitOnlyType(ModifierTypes.METER2_TYPE)
+                            if unitConversionResultsInFloat(
+                                meter_type, rhs_type
+                            ) or unitConversionResultsInFloat(meter2_type, lhs_type):
+                                new_type.builtin = BuiltInTypes.FLOAT_TYPE
+                        elif volume_type == ModifierTypes.ML_TYPE:
+                            cm_type = createUnitOnlyType(ModifierTypes.CM_TYPE)
+                            cm2_type = createUnitOnlyType(ModifierTypes.CM2_TYPE)
+                            if unitConversionResultsInFloat(
+                                cm_type, rhs_type
+                            ) or unitConversionResultsInFloat(cm2_type, lhs_type):
+                                new_type.builtin = BuiltInTypes.FLOAT_TYPE
                         break
-                    if distance_type in rhs_type.modifiers:
-                        new_modifiers.append(distance_or_area_to_volume[distance_type])
+                    elif distance_type in rhs_type.modifiers:
+                        volume_type = distance_or_area_to_volume[area_type]
+                        new_type.modifiers.append(volume_type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=volume_type, unit_class=ModifierClass.VOLUME
+                        )
+                        if volume_type == ModifierTypes.KL_TYPE:
+                            meter_type = createUnitOnlyType(ModifierTypes.METER_TYPE)
+                            meter2_type = createUnitOnlyType(ModifierTypes.METER2_TYPE)
+                            if unitConversionResultsInFloat(
+                                meter_type, rhs_type
+                            ) or unitConversionResultsInFloat(meter2_type, lhs_type):
+                                new_type.builtin = BuiltInTypes.FLOAT_TYPE
+                        elif volume_type == ModifierTypes.ML_TYPE:
+                            cm_type = createUnitOnlyType(ModifierTypes.CM_TYPE)
+                            cm2_type = createUnitOnlyType(ModifierTypes.CM2_TYPE)
+                            if unitConversionResultsInFloat(
+                                cm_type, rhs_type
+                            ) or unitConversionResultsInFloat(cm2_type, lhs_type):
+                                new_type.builtin = BuiltInTypes.FLOAT_TYPE
                         break
 
             elif (
                 lhs_exclusive == ModifierClass.MASS
                 and rhs_exclusive == ModifierClass.ACCELERATION
-            ) or (
+            ):
+                kg_type = createUnitOnlyType(ModifierTypes.KG_TYPE)
+                new_type.modifiers.append(ModifierTypes.NEWT_TYPE)
+                new_type.exclusive = ExclusiveUnit(
+                    unit=ModifierTypes.NEWT_TYPE, unit_class=ModifierClass.FORCE
+                )
+                if unitConversionResultsInFloat(kg_type, lhs_type):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
+
+            elif (
                 lhs_exclusive == ModifierClass.ACCELERATION
                 and rhs_exclusive == ModifierClass.MASS
             ):
-                new_modifiers.append(ModifierTypes.NEWT_TYPE)
+                kg_type = createUnitOnlyType(ModifierTypes.KG_TYPE)
+                new_type.modifiers.append(ModifierTypes.NEWT_TYPE)
+                new_type.exclusive = ExclusiveUnit(
+                    unit=ModifierTypes.NEWT_TYPE, unit_class=ModifierClass.FORCE
+                )
+                if unitConversionResultsInFloat(kg_type, rhs_type):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
 
             elif lhs_exclusive and not rhs_exclusive:
                 for type in modifier_priority_table[lhs_exclusive]:
                     if type in lhs_type.modifiers:
-                        new_modifiers.append(type)
+                        new_type.modifiers.append(type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=type, unit_class=lhs_exclusive
+                        )
                         break
 
             elif not lhs_exclusive and rhs_exclusive:
                 for type in modifier_priority_table[rhs_exclusive]:
                     if type in rhs_type.modifiers:
-                        new_modifiers.append(type)
+                        new_type.modifiers.append(type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=type, unit_class=rhs_exclusive
+                        )
                         break
             else:
                 nonFatalError(
@@ -642,22 +838,22 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     ModifierTypes.POSITIVE_TYPE in lhs_type.modifiers
                     and ModifierTypes.POSITIVE_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.POSITIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.POSITIVE_TYPE)
                 elif (
                     ModifierTypes.NEGATIVE_TYPE in lhs_type.modifiers
                     and ModifierTypes.NEGATIVE_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.POSITIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.POSITIVE_TYPE)
                 elif (
                     ModifierTypes.POSITIVE_TYPE in lhs_type.modifiers
                     and ModifierTypes.NEGATIVE_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.NEGATIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.NEGATIVE_TYPE)
                 elif (
                     ModifierTypes.NEGATIVE_TYPE in lhs_type.modifiers
                     and ModifierTypes.POSITIVE_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.NEGATIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.NEGATIVE_TYPE)
             elif ModifierClass.SIGN in lhs_class:
                 pass
             elif ModifierClass.SIGN in rhs_class:
@@ -667,7 +863,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                 ModifierClass.NONZERO in lhs_class
                 and ModifierClass.NONZERO in rhs_class
             ):
-                new_modifiers.append(ModifierTypes.NONZERO_TYPE)
+                new_type.modifiers.append(ModifierTypes.NONZERO_TYPE)
             elif ModifierClass.NONZERO in lhs_class:
                 pass
             elif ModifierClass.NONZERO in rhs_class:
@@ -678,24 +874,24 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     ModifierTypes.EVEN_TYPE in lhs_type.modifiers
                     and ModifierTypes.EVEN_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.EVEN_TYPE)
+                    new_type.modifiers.append(ModifierTypes.EVEN_TYPE)
                 elif (
                     ModifierTypes.EVEN_TYPE in lhs_type.modifiers
                     and ModifierTypes.ODD_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.EVEN_TYPE)
+                    new_type.modifiers.append(ModifierTypes.EVEN_TYPE)
                 elif (
                     ModifierTypes.ODD_TYPE in lhs_type.modifiers
                     and ModifierTypes.EVEN_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.EVEN_TYPE)
+                    new_type.modifiers.append(ModifierTypes.EVEN_TYPE)
                 else:
-                    new_modifiers.append(ModifierTypes.ODD_TYPE)
+                    new_type.modifiers.append(ModifierTypes.ODD_TYPE)
             elif ModifierClass.PARITY in lhs_class:
                 pass
             elif ModifierClass.PARITY in rhs_class:
                 pass
-            tree.data.type = Type(builtin=new_builtin, modifiers=new_modifiers)
+            tree.data.type = new_type
             return tree.data.type
         elif operator == ASTOperator.DIV_OPERATOR:
             if lhs_type.builtin in num_types or rhs_type.builtin in num_types:
@@ -712,7 +908,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                             )
                             break
                         else:
-                            new_builtin = int_type
+                            new_type.builtin = int_type
                             break
             else:
                 nonFatalError(
@@ -722,8 +918,15 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
             lhs_class = getModifierClass(lhs_type.modifiers)
             rhs_class = getModifierClass(rhs_type.modifiers)
 
-            lhs_exclusive = getExclusiveClass(lhs_class)
-            rhs_exclusive = getExclusiveClass(rhs_class)
+            lhs_exclusive = (
+                lhs_type.exclusive.unit_class if lhs_type.exclusive else None
+            )
+            rhs_exclusive = (
+                rhs_type.exclusive.unit_class if rhs_type.exclusive else None
+            )
+
+            lhs_unit = lhs_type.exclusive.unit if lhs_type.exclusive else None
+            rhs_unit = rhs_type.exclusive.unit if rhs_type.exclusive else None
 
             # EXCLUSIVE CLASS
             if not lhs_exclusive and not rhs_exclusive:
@@ -732,7 +935,10 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
             elif lhs_exclusive and not rhs_exclusive:
                 for type in modifier_priority_table[lhs_exclusive]:
                     if type in lhs_type.modifiers:
-                        new_modifiers.append(type)
+                        new_type.modifiers.append(type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=type, unit_class=lhs_exclusive
+                        )
                         break
 
             elif not lhs_exclusive and rhs_exclusive:
@@ -744,54 +950,130 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
             ):
                 for type in modifier_priority_table[lhs_exclusive]:
                     if type in lhs_type.modifiers or type in rhs_type.modifiers:
-                        new_modifiers.append(type)
+                        new_type.modifiers.append(type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=type, unit_class=lhs_exclusive
+                        )
                         break
 
             elif lhs_exclusive and rhs_exclusive and lhs_exclusive == rhs_exclusive:
-                pass
+                for type in modifier_priority_table[lhs_exclusive]:
+                    if lhs_unit == type or rhs_unit == type:
+                        if unitConversionResultsInFloat(
+                            createUnitOnlyType(type), lhs_type
+                        ) or unitConversionResultsInFloat(
+                            createUnitOnlyType(type), rhs_type
+                        ):
+                            new_type.builtin = BuiltInTypes.FLOAT_TYPE
+                            break
 
             elif (
                 lhs_exclusive == ModifierClass.DISTANCE
                 and rhs_exclusive == ModifierClass.TIME
             ):
-                if ModifierTypes.METER_TYPE in lhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.MPS_TYPE)
-                elif ModifierTypes.MM_TYPE in lhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.MPS_TYPE)
-                elif ModifierTypes.CM_TYPE in lhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.MPS_TYPE)
-                elif ModifierTypes.KM_TYPE in lhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.MPS_TYPE)
-                elif ModifierTypes.FT_TYPE in lhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.FPS_TYPE)
-                elif ModifierTypes.INCH_TYPE in lhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.FPS_TYPE)
+                assert lhs_unit and rhs_unit
+                target_velocity = distance_to_velocity[lhs_unit]
+                new_type.modifiers.append(target_velocity)
+                new_type.exclusive = ExclusiveUnit(
+                    unit=target_velocity,
+                    unit_class=ModifierClass.VELOCITY,
+                )
+                if target_velocity == ModifierTypes.MPS_TYPE:
+                    if unitConversionResultsInFloat(
+                        createUnitOnlyType(ModifierTypes.METER_TYPE), lhs_type
+                    ):
+                        new_type.builtin = BuiltInTypes.FLOAT_TYPE
+
+                elif target_velocity == ModifierTypes.FPS_TYPE:
+                    if unitConversionResultsInFloat(
+                        createUnitOnlyType(ModifierTypes.FT_TYPE), lhs_type
+                    ):
+                        new_type.builtin = BuiltInTypes.FLOAT_TYPE
+
+                if unitConversionResultsInFloat(
+                    createUnitOnlyType(ModifierTypes.SECOND_TYPE), rhs_type
+                ):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
 
             elif (
                 lhs_exclusive == ModifierClass.VELOCITY
                 and rhs_exclusive == ModifierClass.TIME
             ):
-                new_modifiers.append(ModifierTypes.MPS2_TYPE)
+                new_type.modifiers.append(ModifierTypes.MPS2_TYPE)
+                new_type.exclusive = ExclusiveUnit(
+                    unit=ModifierTypes.MPS2_TYPE,
+                    unit_class=ModifierClass.ACCELERATION,
+                )
+                if unitConversionResultsInFloat(
+                    createUnitOnlyType(ModifierTypes.MPS_TYPE), lhs_type
+                ):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
+
+                if unitConversionResultsInFloat(
+                    createUnitOnlyType(ModifierTypes.SECOND_TYPE), rhs_type
+                ):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
 
             elif (
                 lhs_exclusive == ModifierClass.FORCE
                 and rhs_exclusive == ModifierClass.MASS
             ):
-                new_modifiers.append(ModifierTypes.MPS2_TYPE)
+                new_type.modifiers.append(ModifierTypes.MPS2_TYPE)
+                new_type.exclusive = ExclusiveUnit(
+                    unit=ModifierTypes.MPS2_TYPE,
+                    unit_class=ModifierClass.ACCELERATION,
+                )
+                if unitConversionResultsInFloat(
+                    createUnitOnlyType(ModifierTypes.NEWT_TYPE), lhs_type
+                ):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
+
+                if unitConversionResultsInFloat(
+                    createUnitOnlyType(ModifierTypes.KG_TYPE), rhs_type
+                ):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
 
             elif (
                 lhs_exclusive == ModifierClass.FORCE
                 and rhs_exclusive == ModifierClass.ACCELERATION
             ):
-                new_modifiers.append(ModifierTypes.KG_TYPE)
+                new_type.modifiers.append(ModifierTypes.KG_TYPE)
+                new_type.exclusive = ExclusiveUnit(
+                    unit=ModifierTypes.KG_TYPE,
+                    unit_class=ModifierClass.MASS,
+                )
+                if unitConversionResultsInFloat(
+                    createUnitOnlyType(ModifierTypes.NEWT_TYPE), lhs_type
+                ):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
+
+                if unitConversionResultsInFloat(
+                    createUnitOnlyType(ModifierTypes.MPS2_TYPE), rhs_type
+                ):
+                    new_type.builtin = BuiltInTypes.FLOAT_TYPE
 
             elif (
                 lhs_exclusive == ModifierClass.VOLUME
                 and rhs_exclusive == ModifierClass.AREA
             ):
-                for type in modifier_priority_table[rhs_exclusive]:
-                    if type in rhs_type.modifiers:
-                        new_modifiers.append(area_to_distance[type])
+                for type in modifier_priority_table[lhs_exclusive]:
+                    if type in lhs_type.modifiers:
+                        distance_type, _ = volume_to_distance_and_area[type]
+                        area_type, volume_type = distance_to_area_and_volume[
+                            distance_type
+                        ]
+                        new_type.modifiers.append(distance_type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=distance_type, unit_class=ModifierClass.DISTANCE
+                        )
+                        if unitConversionResultsInFloat(
+                            createUnitOnlyType(volume_type), lhs_type
+                        ):
+                            new_type.builtin = BuiltInTypes.FLOAT_TYPE
+                        if unitConversionResultsInFloat(
+                            createUnitOnlyType(area_type), rhs_type
+                        ):
+                            new_type.builtin = BuiltInTypes.FLOAT_TYPE
                         break
 
             elif (
@@ -802,19 +1084,51 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     area_type = modifier_priority_table[lhs_exclusive][i]
                     distance_type = modifier_priority_table[rhs_exclusive][i]
                     if area_type in lhs_type.modifiers:
-                        new_modifiers.append(area_to_distance[area_type])
+                        new_type.modifiers.append(area_to_distance[area_type])
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=area_to_distance[area_type],
+                            unit_class=ModifierClass.DISTANCE,
+                        )
+                        if unitConversionResultsInFloat(
+                            createUnitOnlyType(area_to_distance[area_type]), rhs_type
+                        ):
+                            new_type.builtin = BuiltInTypes.FLOAT_TYPE
                         break
-                    if distance_type in rhs_type.modifiers:
-                        new_modifiers.append(distance_type)
+                    elif distance_type in rhs_type.modifiers:
+                        new_type.modifiers.append(distance_type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=distance_type,
+                            unit_class=ModifierClass.DISTANCE,
+                        )
+                        if unitConversionResultsInFloat(
+                            createUnitOnlyType(distance_type),
+                            lhs_type,
+                        ):
+                            new_type.builtin = BuiltInTypes.FLOAT_TYPE
                         break
 
             elif (
                 lhs_exclusive == ModifierClass.VOLUME
                 and rhs_exclusive == ModifierClass.DISTANCE
             ):
-                for type in modifier_priority_table[rhs_exclusive]:
+                for type in modifier_priority_table[lhs_exclusive]:
                     if type in rhs_type.modifiers:
-                        new_modifiers.append(distance_to_area[type])
+                        _, area_type = volume_to_distance_and_area[type]
+                        distance_type, volume_type = area_to_distance_and_volume[
+                            area_type
+                        ]
+                        new_type.modifiers.append(area_type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=area_type, unit_class=ModifierClass.AREA
+                        )
+                        if unitConversionResultsInFloat(
+                            createUnitOnlyType(volume_type), lhs_type
+                        ):
+                            new_type.builtin = BuiltInTypes.FLOAT_TYPE
+                        if unitConversionResultsInFloat(
+                            createUnitOnlyType(distance_type), rhs_type
+                        ):
+                            new_type.builtin = BuiltInTypes.FLOAT_TYPE
                         break
 
             else:
@@ -828,22 +1142,22 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     ModifierTypes.POSITIVE_TYPE in lhs_type.modifiers
                     and ModifierTypes.POSITIVE_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.POSITIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.POSITIVE_TYPE)
                 elif (
                     ModifierTypes.NEGATIVE_TYPE in lhs_type.modifiers
                     and ModifierTypes.NEGATIVE_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.POSITIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.POSITIVE_TYPE)
                 elif (
                     ModifierTypes.POSITIVE_TYPE in lhs_type.modifiers
                     and ModifierTypes.NEGATIVE_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.NEGATIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.NEGATIVE_TYPE)
                 elif (
                     ModifierTypes.NEGATIVE_TYPE in lhs_type.modifiers
                     and ModifierTypes.POSITIVE_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.NEGATIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.NEGATIVE_TYPE)
             elif ModifierClass.SIGN in lhs_class:
                 pass
             elif ModifierClass.SIGN in rhs_class:
@@ -853,7 +1167,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                 ModifierClass.NONZERO in lhs_class
                 and ModifierClass.NONZERO in rhs_class
             ):
-                new_modifiers.append(ModifierTypes.NONZERO_TYPE)
+                new_type.modifiers.append(ModifierTypes.NONZERO_TYPE)
             elif ModifierClass.NONZERO in lhs_class:
                 pass
             elif ModifierClass.NONZERO in rhs_class:
@@ -881,7 +1195,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                 pass
             elif ModifierClass.PARITY in rhs_class:
                 pass
-            tree.data.type = Type(builtin=new_builtin, modifiers=new_modifiers)
+            tree.data.type = new_type
             return tree.data.type
         elif operator == ASTOperator.MOD_OPERATOR:
             if lhs_type.builtin in int_types or rhs_type.builtin in int_types:
@@ -898,7 +1212,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                             )
                             break
                         else:
-                            new_builtin = int_type
+                            new_type.builtin = int_type
                             break
             else:
                 nonFatalError(
@@ -916,7 +1230,10 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
             elif lhs_exclusive and rhs_exclusive and lhs_exclusive == rhs_exclusive:
                 for type in modifier_priority_table[lhs_exclusive]:
                     if type in lhs_type.modifiers:
-                        new_modifiers.append(type)
+                        new_type.modifiers.append(type)
+                        new_type.exclusive = ExclusiveUnit(
+                            unit=type, unit_class=lhs_exclusive
+                        )
             else:
                 nonFatalError(
                     f"ERROR: invalid operand class for modulo {lhs_exclusive} and {rhs_exclusive}, type {lhs_type} and {rhs_type}"
@@ -945,7 +1262,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     ModifierTypes.EVEN_TYPE in lhs_type.modifiers
                     and ModifierTypes.EVEN_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.EVEN_TYPE)
+                    new_type.modifiers.append(ModifierTypes.EVEN_TYPE)
                 elif (
                     ModifierTypes.EVEN_TYPE in lhs_type.modifiers
                     and ModifierTypes.ODD_TYPE in rhs_type.modifiers
@@ -955,14 +1272,14 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     ModifierTypes.ODD_TYPE in lhs_type.modifiers
                     and ModifierTypes.EVEN_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.ODD_TYPE)
+                    new_type.modifiers.append(ModifierTypes.ODD_TYPE)
                 else:
                     pass
             elif ModifierClass.PARITY in lhs_class:
                 pass
             elif ModifierClass.PARITY in rhs_class:
                 pass
-            tree.data.type = Type(builtin=new_builtin, modifiers=new_modifiers)
+            tree.data.type = new_type
             return tree.data.type
         elif operator == ASTOperator.EXP_OPERATOR:
             if lhs_type.builtin in num_types or rhs_type.builtin in num_types:
@@ -979,7 +1296,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                             )
                             break
                         else:
-                            new_builtin = int_type
+                            new_type.builtin = int_type
                             break
             else:
                 nonFatalError(
@@ -1002,22 +1319,22 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
             # INCLUSIVE CLASS
             if ModifierClass.SIGN in lhs_class and ModifierClass.SIGN in rhs_class:
                 if ModifierTypes.POSITIVE_TYPE in lhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.POSITIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.POSITIVE_TYPE)
                 elif ModifierTypes.EVEN_TYPE in rhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.POSITIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.POSITIVE_TYPE)
                 elif ModifierTypes.ODD_TYPE in rhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.NEGATIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.NEGATIVE_TYPE)
                 elif lhs_type.builtin not in int_types:
                     nonFatalError(
                         f"ERROR: negative base for non integer exponent is invalid {lhs_type} and {rhs_type}"
                     )
             elif ModifierClass.SIGN in lhs_class:
                 if ModifierTypes.POSITIVE_TYPE in lhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.POSITIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.POSITIVE_TYPE)
                 elif ModifierTypes.EVEN_TYPE in rhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.POSITIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.POSITIVE_TYPE)
                 elif ModifierTypes.ODD_TYPE in rhs_type.modifiers:
-                    new_modifiers.append(ModifierTypes.NEGATIVE_TYPE)
+                    new_type.modifiers.append(ModifierTypes.NEGATIVE_TYPE)
                 elif lhs_type.builtin not in int_types:
                     nonFatalError(
                         f"ERROR: negative base for non integer exponent is invalid {lhs_type} and {rhs_type}"
@@ -1034,7 +1351,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                         f"ERROR: negative base for non integer exponent is invalid {lhs_type} and {rhs_type}"
                     )
                 else:
-                    new_modifiers.append(ModifierTypes.NONZERO_TYPE)
+                    new_type.modifiers.append(ModifierTypes.NONZERO_TYPE)
             elif ModifierClass.NONZERO in rhs_class:
                 pass
 
@@ -1044,26 +1361,30 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     and ModifierTypes.NONZERO_TYPE in rhs_type.modifiers
                     and ModifierTypes.POSITIVE_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.EVEN_TYPE)
+                    new_type.modifiers.append(ModifierTypes.EVEN_TYPE)
                 elif (
                     ModifierTypes.ODD_TYPE in lhs_type.modifiers
                     and ModifierTypes.NONZERO_TYPE in rhs_type.modifiers
                     and ModifierTypes.POSITIVE_TYPE in rhs_type.modifiers
                 ):
-                    new_modifiers.append(ModifierTypes.ODD_TYPE)
+                    new_type.modifiers.append(ModifierTypes.ODD_TYPE)
                 else:
                     pass
             elif ModifierClass.PARITY in lhs_class:
                 pass
             elif ModifierClass.PARITY in rhs_class:
                 pass
-            tree.data.type = Type(builtin=new_builtin, modifiers=new_modifiers)
+            return Type(builtin=new_type.builtin, modifiers=new_type.modifiers)
+            tree.data.type = new_type
             return tree.data.type
         elif operator in [
             ASTOperator.NOT_EQUAL_OPERATOR,
             ASTOperator.EQUAL_OPERATOR,
         ]:
-            new_builtin = BuiltInTypes.BOOL_TYPE
+            new_type.builtin = BuiltInTypes.BOOL_TYPE
+            tree.data.type = new_type
+            return tree.data.type
+            new_type.builtin = BuiltInTypes.BOOL_TYPE
             lhs_class = getModifierClass(lhs_type.modifiers)
             rhs_class = getModifierClass(rhs_type.modifiers)
 
@@ -1076,7 +1397,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     )
                     break
 
-            tree.data.type = Type(builtin=new_builtin, modifiers=new_modifiers)
+            tree.data.type = new_type
             return tree.data.type
         elif operator in [
             ASTOperator.LESS_OPERATOR,
@@ -1084,7 +1405,6 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
             ASTOperator.GREATER_OPERATOR,
             ASTOperator.GREATER_OR_EQUAL_OPERATOR,
         ]:
-            new_builtin = BuiltInTypes.BOOL_TYPE
             if (
                 lhs_type.builtin == BuiltInTypes.STRING_TYPE
                 or rhs_type.builtin == BuiltInTypes.STRING_TYPE
@@ -1092,28 +1412,67 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                 nonFatalError(
                     f"ERROR: string is invalid for comparison operation {lhs_type} and {rhs_type}"
                 )
-                return Type(builtin=new_builtin)
-            lhs_class = getModifierClass(lhs_type.modifiers)
-            rhs_class = getModifierClass(rhs_type.modifiers)
+                return Type(builtin=new_type.builtin)
+            elif lhs_type.builtin in num_types or rhs_type.builtin in num_types:
+                for int_type in num_types:
+                    if lhs_type.builtin == int_type or rhs_type.builtin == int_type:
+                        if lhs_type.builtin not in int_promotion_table[int_type]:
+                            nonFatalError(
+                                f"ERROR: Invalid lhs operand {lhs_type} must be numerical type"
+                            )
+                            break
+                        elif rhs_type.builtin not in int_promotion_table[int_type]:
+                            nonFatalError(
+                                f"ERROR: Invalid rhs operand {rhs_type} must be numerical type"
+                            )
+                            break
+                        else:
+                            break
+            else:
+                nonFatalError(
+                    f"ERROR: Invalid operands {lhs_type}, {rhs_type} for binary operation"
+                )
+            lhs_exclusive = (
+                lhs_type.exclusive.unit_class if lhs_type.exclusive else None
+            )
+            rhs_exclusive = (
+                rhs_type.exclusive.unit_class if rhs_type.exclusive else None
+            )
 
-            for modifier in modifier_priority_table.keys():
-                if modifier not in lhs_class and modifier not in rhs_class:
-                    continue
-                if modifier not in lhs_class or modifier not in rhs_class:
+            if bool(lhs_exclusive) ^ bool(rhs_exclusive):
+                nonFatalError(
+                    f"ERROR: mismatched exclusive modifier types {lhs_exclusive} and {rhs_exclusive}"
+                )
+            elif lhs_exclusive and rhs_exclusive:
+                if lhs_exclusive != rhs_exclusive:
                     nonFatalError(
                         f"ERROR: mismatched exclusive modifier types {lhs_type} and {rhs_type}"
                     )
-                    break
-
-            tree.data.type = Type(builtin=new_builtin)
+                    return new_type
+                assert lhs_type.exclusive and rhs_type.exclusive
+                for type in modifier_priority_table[lhs_exclusive]:
+                    if (
+                        type == lhs_type.exclusive.unit
+                        or type == rhs_type.exclusive.unit
+                    ):
+                        if (
+                            lhs_type.exclusive.unit_class == ModifierClass.TEMP
+                            and lhs_type.exclusive.unit != rhs_type.exclusive.unit
+                        ):
+                            nonFatalError(
+                                f"ERROR: addition of temperatures must have matching units {lhs_type.exclusive.unit} and {rhs_type.exclusive.unit}"
+                            )
+                        break
+            new_type.builtin = BuiltInTypes.BOOL_TYPE
+            tree.data.type = new_type
             return tree.data.type
         elif operator == ASTOperator.AND_OPERATOR:
-            new_builtin = BuiltInTypes.BOOL_TYPE
-            tree.data.type = Type(builtin=new_builtin)
+            new_type.builtin = BuiltInTypes.BOOL_TYPE
+            tree.data.type = new_type
             return tree.data.type
         elif operator == ASTOperator.OR_OPERATOR:
-            new_builtin = BuiltInTypes.BOOL_TYPE
-            tree.data.type = Type(builtin=new_builtin)
+            new_type.builtin = BuiltInTypes.BOOL_TYPE
+            tree.data.type = new_type
             return tree.data.type
         elif operator == ASTOperator.ASSIGNMENT_OPERATOR:
             if lhs.kind != ASTNodeType.IDENTIFIER:
@@ -1154,7 +1513,10 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                     operator=ASTOperator.ASSIGNMENT_OPERATOR,
                 ),
             )
-            tree.data.type = resolveBinaryOp(pseudo_assignment_op_node, scope)
+            tree.data = pseudo_assignment_op_node.data
+            tree.kind = pseudo_assignment_op_node.kind
+            tree.token = pseudo_assignment_op_node.token
+            tree.data.type = resolveBinaryOp(tree, scope)
             return tree.data.type
         elif operator in [
             ASTOperator.PERCENT_SCALE_OPERATOR,
@@ -1175,7 +1537,7 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
                             )
                             break
                         else:
-                            new_builtin = int_type
+                            new_type.builtin = int_type
                             break
             else:
                 nonFatalError(
@@ -1189,9 +1551,11 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
             rhs_exclusive = getExclusiveClass(rhs_class)
 
             if rhs_exclusive == ModifierClass.PERCENT:
+                new_type.builtin = BuiltInTypes.FLOAT_TYPE
                 tree.data.type = lhs_type
                 return tree.data.type
             elif not rhs_exclusive:
+                new_type.builtin = BuiltInTypes.FLOAT_TYPE
                 tree.data.type = lhs_type
                 return tree.data.type
             else:
@@ -1455,6 +1819,14 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
         if len(modifier_classes) > 1:
             names = ", ".join(m.name for m in modifier_classes)
             nonFatalError(f"ERROR: Modifier types {names} are exclusive")
+        elif len(modifier_classes) == 1:
+            modifier_types = modifier_priority_table[modifier_classes[0]]
+            for unit in type.modifiers:
+                if unit in modifier_types:
+                    type.exclusive = ExclusiveUnit(
+                        unit=unit, unit_class=modifier_classes[0]
+                    )
+
         if type.builtin == BuiltInTypes.FLOAT_TYPE and has_parity:
             nonFatalError("ERROR: Parity type cannot be floating point")
 
