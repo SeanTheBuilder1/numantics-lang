@@ -632,45 +632,77 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
             top_scope = top_scope.parent_scope
         assert False
 
-    def toBool(value: ir.Value, type: Type, builder: ir.IRBuilder):
+    def toBool(
+        value: ir.Value | Constant, type: Type, builder: ir.IRBuilder
+    ) -> ir.Value | Constant:
+        if isinstance(value, BaseConstant):
+            if value.value:
+                return BoolConstant(value=True)
+            return BoolConstant(value=False)
         if type.builtin == BuiltInTypes.BOOL_TYPE:
             return value
         elif type.builtin in int_types:
-            return builder.icmp_unsigned("!=", Zero, value)
+            return builder.icmp_signed("!=", Zero, value)
         elif type.builtin == BuiltInTypes.FLOAT_TYPE:
-            return builder.fcmp_unordered("!=", ZeroFloat, value)
+            return builder.fcmp_ordered("!=", ZeroFloat, value)
         elif type.builtin == BuiltInTypes.STRING_TYPE:
             print("WARN: string to bool not yet implemented")
         assert False
 
-    def toInt(value: ir.Value, type: Type, builder: ir.IRBuilder):
+    def toInt(
+        value: ir.Value | Constant, type: Type, builder: ir.IRBuilder
+    ) -> ir.Value | Constant:
         if type.builtin == BuiltInTypes.INT_TYPE:
             return value
         elif type.builtin in int_types:
-            return builder.sext(value, IntType)
+            if isinstance(value, BaseConstant):
+                if value.type == BuiltInTypes.CHAR_TYPE:
+                    return IntConstant(value=ord(value.value))
+                return IntConstant(value=int(value.value))
+            return cast(ir.Value, builder.sext(value, IntType))
         elif type.builtin == BuiltInTypes.FLOAT_TYPE:
-            return builder.fptosi(value, IntType)
+            if isinstance(value, BaseConstant):
+                return IntConstant(value=int(value.value))
+            return cast(ir.Value, builder.fptosi(value, IntType))
         assert False
 
-    def toFloat(value: ir.Value, type: Type, builder: ir.IRBuilder):
+    def toFloat(
+        value: ir.Value | Constant, type: Type, builder: ir.IRBuilder
+    ) -> ir.Value | Constant:
         if type.builtin == BuiltInTypes.FLOAT_TYPE:
             return value
         elif type.builtin in int_types:
-            return builder.sitofp(value, FloatType)
+            if isinstance(value, BaseConstant):
+                if type.builtin == BuiltInTypes.CHAR_TYPE:
+                    return FloatConstant(value=float(ord(cast(str, value.value))))
+                return FloatConstant(value=float(int(value.value)))
+            return builder.sitofp(value, FloatType)  # type: ignore
         assert False
 
-    def toChar(value: ir.Value, type: Type, builder: ir.IRBuilder):
+    def toChar(
+        value: ir.Value | Constant, type: Type, builder: ir.IRBuilder
+    ) -> ir.Value | Constant:
         if type.builtin == BuiltInTypes.CHAR_TYPE:
             return value
         elif type.builtin == BuiltInTypes.INT_TYPE:
-            return builder.trunc(value, CharType)
+            if isinstance(value, BaseConstant):
+                return CharConstant(value=chr(cast(int, value.value) % 256))
+            return cast(ir.Value, builder.trunc(value, CharType))
         elif type.builtin == BuiltInTypes.BOOL_TYPE:
-            return builder.sext(value, CharType)
+            if isinstance(value, BaseConstant):
+                if value.value:
+                    return CharConstant(value=chr(1))
+                return CharConstant(value=chr(0))
+            return cast(ir.Value, builder.sext(value, CharType))
         elif type.builtin == BuiltInTypes.FLOAT_TYPE:
-            return builder.fptosi(value, CharType)
+            if isinstance(value, BaseConstant):
+                return CharConstant(value=chr(int(value.value) % 256))
+            return cast(ir.Value, builder.fptosi(value, CharType))
         assert False
 
-    def castType(value: ir.Value, dest: Type, src: Type, builder: ir.IRBuilder):
+    def castType(
+        value: ir.Value | Constant, dest: Type, src: Type, builder: ir.IRBuilder
+    ) -> ir.Value | Constant:
         if dest.builtin == BuiltInTypes.INT_TYPE:
             return toInt(value, src, builder)
         elif dest.builtin == BuiltInTypes.FLOAT_TYPE:
