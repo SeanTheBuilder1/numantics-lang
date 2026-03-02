@@ -515,9 +515,9 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
     def compileExpression(
         tree: ASTNode, scope: Scope, builder: ir.IRBuilder
     ) -> Constant | ir.Value:
-        # if tree.kind == ASTNodeType.BINARY_OP:
-        #     return compileBinaryOp(tree)
-        if tree.kind == ASTNodeType.UNARY_OP:
+        if tree.kind == ASTNodeType.BINARY_OP:
+            return compileBinaryOp(tree, scope, builder)
+        elif tree.kind == ASTNodeType.UNARY_OP:
             return compileUnaryOp(tree, scope, builder)
         elif tree.kind == ASTNodeType.FUNCTION_CALL:
             return compileFunctionCall(tree, scope, builder)
