@@ -720,6 +720,146 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
             return value
         assert False
 
+    def convertToUnit(
+        value: ir.Value | Constant,
+        dest_type: Type,
+        src_type: Type,
+        builder: ir.IRBuilder,
+    ) -> ir.Value | Constant:
+        assert dest_type.exclusive and src_type.exclusive
+        dest_unit = dest_type.exclusive.unit
+        src_unit = src_type.exclusive.unit
+
+        if dest_unit == src_unit:
+            return value
+        elif src_unit in multiple_based_units:
+            has_baked = baked_multiple_conversion_table.get((src_unit, dest_unit))
+            assert has_baked
+            is_float, factor = has_baked
+            if is_float or src_type.builtin == BuiltInTypes.FLOAT_TYPE:
+                if src_type.builtin == BuiltInTypes.INT_TYPE:
+                    value = castType(
+                        value, Type(builtin=BuiltInTypes.FLOAT_TYPE), src_type, builder
+                    )
+                if isinstance(value, BaseConstant):
+                    if value.type == BuiltInTypes.FLOAT_TYPE:
+                        return FloatConstant(value=value.value * factor)
+                return cast(
+                    ir.Value, builder.fmul(value, ir.Constant(FloatType, factor))
+                )
+            else:
+                if isinstance(value, BaseConstant):
+                    if value.type == BuiltInTypes.INT_TYPE:
+                        return IntConstant(value=value.value * round(factor))
+                return cast(
+                    ir.Value, builder.mul(value, ir.Constant(IntType, round(factor)))
+                )
+
+        elif (
+            dest_unit == ModifierTypes.KELV_TYPE and src_unit == ModifierTypes.CELC_TYPE
+        ):
+            if src_type.builtin == BuiltInTypes.INT_TYPE:
+                value = castType(
+                    value, Type(builtin=BuiltInTypes.FLOAT_TYPE), src_type, builder
+                )
+            if (
+                isinstance(value, BaseConstant)
+                and value.type == BuiltInTypes.FLOAT_TYPE
+            ):
+                return FloatConstant(value=value.value + 273.15)
+            return cast(ir.Value, builder.fadd(value, ir.Constant(FloatType, 273.15)))
+        elif (
+            dest_unit == ModifierTypes.KELV_TYPE and src_unit == ModifierTypes.FAHR_TYPE
+        ):
+            if src_type.builtin == BuiltInTypes.INT_TYPE:
+                value = castType(
+                    value, Type(builtin=BuiltInTypes.FLOAT_TYPE), src_type, builder
+                )
+            if (
+                isinstance(value, BaseConstant)
+                and value.type == BuiltInTypes.FLOAT_TYPE
+            ):
+                return FloatConstant(value=(value.value + 459.67) * (5.0 / 9.0))
+            return cast(
+                ir.Value,
+                builder.fmul(
+                    builder.fadd(value, ir.Constant(FloatType, 459.67)),
+                    ir.Constant(FloatType, 5.0 / 9.0),
+                ),
+            )
+        elif (
+            dest_unit == ModifierTypes.CELC_TYPE and src_unit == ModifierTypes.KELV_TYPE
+        ):
+            if src_type.builtin == BuiltInTypes.INT_TYPE:
+                value = castType(
+                    value, Type(builtin=BuiltInTypes.FLOAT_TYPE), src_type, builder
+                )
+            if (
+                isinstance(value, BaseConstant)
+                and value.type == BuiltInTypes.FLOAT_TYPE
+            ):
+                return FloatConstant(value=value.value - 273.15)
+            return cast(ir.Value, builder.fsub(value, ir.Constant(FloatType, 273.15)))
+        elif (
+            dest_unit == ModifierTypes.CELC_TYPE and src_unit == ModifierTypes.FAHR_TYPE
+        ):
+            if src_type.builtin == BuiltInTypes.INT_TYPE:
+                value = castType(
+                    value, Type(builtin=BuiltInTypes.FLOAT_TYPE), src_type, builder
+                )
+            if (
+                isinstance(value, BaseConstant)
+                and value.type == BuiltInTypes.FLOAT_TYPE
+            ):
+                return FloatConstant(value=(value.value - 32.0) * (5.0 / 9.0))
+            return cast(
+                ir.Value,
+                builder.fmul(
+                    builder.fsub(value, ir.Constant(FloatType, 32.0)),
+                    ir.Constant(FloatType, 5.0 / 9.0),
+                ),
+            )
+        elif (
+            dest_unit == ModifierTypes.FAHR_TYPE and src_unit == ModifierTypes.KELV_TYPE
+        ):
+            if src_type.builtin == BuiltInTypes.INT_TYPE:
+                value = castType(
+                    value, Type(builtin=BuiltInTypes.FLOAT_TYPE), src_type, builder
+                )
+            if (
+                isinstance(value, BaseConstant)
+                and value.type == BuiltInTypes.FLOAT_TYPE
+            ):
+                return FloatConstant(value=(value.value * (9.0 / 5.0)) - 459.67)
+            return cast(
+                ir.Value,
+                builder.fsub(
+                    builder.mul(value, ir.Constant(FloatType, 9.0 / 5.0)),
+                    ir.Constant(FloatType, 459.67),
+                ),
+            )
+        elif (
+            dest_unit == ModifierTypes.FAHR_TYPE and src_unit == ModifierTypes.CELC_TYPE
+        ):
+            if src_type.builtin == BuiltInTypes.INT_TYPE:
+                value = castType(
+                    value, Type(builtin=BuiltInTypes.FLOAT_TYPE), src_type, builder
+                )
+            if (
+                isinstance(value, BaseConstant)
+                and value.type == BuiltInTypes.FLOAT_TYPE
+            ):
+                return FloatConstant(value=(value.value * (9.0 / 5.0)) + 32.0)
+            return cast(
+                ir.Value,
+                builder.fadd(
+                    builder.fmul(value, ir.Constant(FloatType, 9.0 / 5.0)),
+                    ir.Constant(FloatType, 32.0),
+                ),
+            )
+
+        assert False
+
     def typeToIrType(type: Type) -> ir.Type:
         if type.builtin == BuiltInTypes.VOID_TYPE:
             return VoidType
