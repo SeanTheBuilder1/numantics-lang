@@ -1384,8 +1384,18 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
         func_ir = symbol.type.func_ir
 
         arguments: list[ir.Value] = []
-        for arg in tree.data.arguments:
+        for arg, param in zip(tree.data.arguments, symbol.type.parameters):
             arg_expr = compileExpression(arg, scope, builder)
+            arg_expr = castType(arg_expr, param.type, arg.data.type, builder)
+            if arg.data.type.exclusive and param.type.exclusive:
+                arg_expr = convertToUnit(arg_expr, param.type, arg.data.type, builder)
+                if unitConversionResultsInFloat(param.type, arg.data.type):
+                    arg_expr = castType(
+                        arg_expr,
+                        param.type,
+                        Type(builtin=BuiltInTypes.FLOAT_TYPE),
+                        builder,
+                    )
             if isinstance(arg_expr, BaseConstant):
                 arg_expr = constantToIrConstant(arg_expr, param.type)
             arguments.append(arg_expr)
