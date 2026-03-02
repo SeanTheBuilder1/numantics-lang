@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Counter
+from typing import cast, Union, Literal
 from llvmlite import ir
 from ast_types import (
     ASTLiteral,
@@ -21,8 +22,41 @@ from semantic_types import (
 
 
 @dataclass
-class Constant:
-    value: int | float | str | bool
+class BaseConstant:
+    pass
+
+
+@dataclass
+class IntConstant(BaseConstant):
+    value: int
+    type: Literal[BuiltInTypes.INT_TYPE] = BuiltInTypes.INT_TYPE
+
+
+@dataclass
+class FloatConstant(BaseConstant):
+    value: float
+    type: Literal[BuiltInTypes.FLOAT_TYPE] = BuiltInTypes.FLOAT_TYPE
+
+
+@dataclass
+class CharConstant(BaseConstant):
+    value: str
+    type: Literal[BuiltInTypes.CHAR_TYPE] = BuiltInTypes.CHAR_TYPE
+
+
+@dataclass
+class StringConstant(BaseConstant):
+    value: str
+    type: Literal[BuiltInTypes.STRING_TYPE] = BuiltInTypes.STRING_TYPE
+
+
+@dataclass
+class BoolConstant(BaseConstant):
+    value: bool
+    type: Literal[BuiltInTypes.BOOL_TYPE] = BuiltInTypes.BOOL_TYPE
+
+
+Constant = Union[IntConstant, FloatConstant, CharConstant, StringConstant, BoolConstant]
 
 
 def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file: str):
@@ -89,7 +123,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
         merge_block = builder.append_basic_block("merge")
 
         expr_cmp = compileExpression(tree.data.expr, scope, builder)
-        if isinstance(expr_cmp, Constant):
+        if isinstance(expr_cmp, BaseConstant):
             expr_cmp = constantToIrConstant(expr_cmp, tree.data.expr.data.type)
         expr_cmp = toBool(expr_cmp, tree.data.expr.data.type, builder)
         builder.cbranch(expr_cmp, truebr=then_block, falsebr=ifnot_block)
@@ -105,7 +139,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
             elif_then = builder.append_basic_block(f"then{i}")
             new_ifnot_block = builder.append_basic_block(f"ifnot{i}")
             expr_cmp = compileExpression(expr, scope, builder)
-            if isinstance(expr_cmp, Constant):
+            if isinstance(expr_cmp, BaseConstant):
                 expr_cmp = constantToIrConstant(expr_cmp, expr.data.type)
             expr_cmp = toBool(expr_cmp, expr.data.type, builder)
             builder.cbranch(expr_cmp, truebr=elif_then, falsebr=new_ifnot_block)
@@ -135,7 +169,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
         tree: ASTNode, scope: Scope, builder: ir.IRBuilder, alloca_block: ir.Block
     ):
         expr_cmp = compileExpression(tree.data.expr, scope, builder)
-        if isinstance(expr_cmp, Constant):
+        if isinstance(expr_cmp, BaseConstant):
             expr_cmp = constantToIrConstant(expr_cmp, tree.data.expr.data.type)
 
         if len(tree.data.case_stmts) == 0:
@@ -160,7 +194,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
         for i, (case_expr, case_node) in enumerate(tree.data.case_stmts):
             builder.position_at_end(notcase_blocks[i])
             case_cmp = compileExpression(case_expr, scope, builder)
-            if isinstance(case_cmp, Constant):
+            if isinstance(case_cmp, BaseConstant):
                 case_cmp = constantToIrConstant(case_cmp, case_expr.data.type)
             result_cmp = builder.icmp_signed("==", expr_cmp, case_cmp)
             notcase_target = notcase_blocks[i + 1] if i + 1 < n else default_block
@@ -187,7 +221,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
         tree: ASTNode, scope: Scope, builder: ir.IRBuilder, alloca_block: ir.Block
     ):
         expr_cmp = compileExpression(tree.data.expr, scope, builder)
-        if isinstance(expr_cmp, Constant):
+        if isinstance(expr_cmp, BaseConstant):
             expr_cmp = constantToIrConstant(expr_cmp, tree.data.expr.data.type)
 
         if len(tree.data.range_stmts) == 0:
@@ -212,14 +246,14 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
         for i, (range_expr, range_node) in enumerate(tree.data.range_stmts):
             builder.position_at_end(notrange_blocks[i])
             range_cmp = compileExpression(range_expr, scope, builder)
-            if isinstance(range_cmp, Constant):
+            if isinstance(range_cmp, BaseConstant):
                 range_cmp = constantToIrConstant(range_cmp, range_expr.data.type)
             if i == n - 1:
                 result_cmp = builder.icmp_signed("==", expr_cmp, range_cmp)
             else:
                 greater_expr, _ = tree.data.range_stmts[i + 1]
                 greater_cmp = compileExpression(greater_expr, scope, builder)
-                if isinstance(greater_cmp, Constant):
+                if isinstance(greater_cmp, BaseConstant):
                     greater_cmp = constantToIrConstant(
                         greater_cmp, greater_expr.data.type
                     )
@@ -258,7 +292,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
         tree.data.cond = cond_block
         if tree.data.right_expr:
             right_expr = compileExpression(tree.data.right_expr, scope, builder)
-            if isinstance(right_expr, Constant):
+            if isinstance(right_expr, BaseConstant):
                 right_expr = constantToIrConstant(
                     right_expr, tree.data.right_expr.data.type
                 )
@@ -268,7 +302,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
             builder.branch(cond_block)
         builder.position_at_end(cond_block)
         left_expr = compileExpression(tree.data.left_expr, scope, builder)
-        if isinstance(left_expr, Constant):
+        if isinstance(left_expr, BaseConstant):
             left_expr = constantToIrConstant(left_expr, tree.data.left_expr.data.type)
         left_expr = toBool(left_expr, tree.data.left_expr.data.type, builder)
         builder.cbranch(left_expr, body_block, merge_block)
@@ -301,7 +335,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
         builder.position_at_end(cond_block)
         if tree.data.condition:
             expr = compileExpression(tree.data.condition, new_scope, builder)
-            if isinstance(expr, Constant):
+            if isinstance(expr, BaseConstant):
                 expr = constantToIrConstant(expr, tree.data.condition.data.type)
             expr = toBool(expr, tree.data.condition.data.type, builder)
             builder.cbranch(expr, body_block, merge_block)
@@ -367,7 +401,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
 
         if tree.data.expression:
             expr = compileExpression(tree.data.expression, scope, builder)
-            if isinstance(expr, Constant):
+            if isinstance(expr, BaseConstant):
                 expr = constantToIrConstant(expr, tree.data.expression.data.type)
             expr = castType(
                 expr, func_data.return_type, tree.data.expression.data.type, builder
@@ -439,7 +473,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
             global_var.linkage = "internal"
             if tree.data.expression:
                 constant_expr = compileExpression(tree.data.expression, scope, builder)
-                assert isinstance(constant_expr, Constant)
+                assert isinstance(constant_expr, BaseConstant)
                 global_var.initializer = constantToIrConstant(  # type: ignore
                     constant_expr, name_data.symbol.type
                 )
@@ -453,7 +487,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
 
         if tree.data.expression:
             expr = compileExpression(tree.data.expression, scope, builder)
-            if isinstance(expr, Constant):
+            if isinstance(expr, BaseConstant):
                 expr = constantToIrConstant(expr, tree.data.expression.data.type)
 
             expr = castType(
@@ -494,8 +528,11 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
         if operator == ASTOperator.POSITIVE_OPERATOR:
             return operand_expr
         elif operator == ASTOperator.NEGATIVE_OPERATOR:
-            if isinstance(operand_expr, Constant):
-                operand_expr.value *= -1
+            if isinstance(operand_expr, BaseConstant):
+                if operand_expr.type == BuiltInTypes.INT_TYPE:
+                    operand_expr.value *= -1
+                elif operand_expr.type == BuiltInTypes.FLOAT_TYPE:
+                    operand_expr.value *= -1.0
                 return operand_expr
             if operand.data.type.builtin in num_types:
                 return builder.sub(Zero, operand_expr)  # type: ignore
@@ -529,7 +566,8 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
             return operand_expr
 
         elif operator == ASTOperator.NOT_OPERATOR:
-            if isinstance(operand_expr, Constant):
+            if isinstance(operand_expr, BaseConstant):
+                assert isinstance(operand_expr, BoolConstant)
                 operand_expr.value = not operand_expr.value
                 return operand_expr
             return builder.not_(operand_expr)  # type: ignore
@@ -548,24 +586,30 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
         arguments: list[ir.Value] = []
         for arg in tree.data.arguments:
             arg_expr = compileExpression(arg, scope, builder)
-            if isinstance(arg_expr, Constant):
-                arg_expr = constantToIrConstant(arg_expr, arg.data.type)
+            if isinstance(arg_expr, BaseConstant):
+                arg_expr = constantToIrConstant(arg_expr, param.type)
             arguments.append(arg_expr)
         return builder.call(func_ir, arguments)
 
     def compileLiteral(tree: ASTNode) -> Constant:
         if tree.data.literal_type == ASTLiteral.TRUE_LITERAL:
-            return Constant(True)
+            tree.data.type = Type(builtin=BuiltInTypes.BOOL_TYPE)
+            return BoolConstant(True)
         elif tree.data.literal_type == ASTLiteral.FALSE_LITERAL:
-            return Constant(False)
+            tree.data.type = Type(builtin=BuiltInTypes.BOOL_TYPE)
+            return BoolConstant(False)
         elif tree.data.literal_type == ASTLiteral.INT_LITERAL:
-            return Constant(int(code[tree.token.start : tree.token.end]))
+            tree.data.type = Type(builtin=BuiltInTypes.INT_TYPE)
+            return IntConstant(int(code[tree.token.start : tree.token.end]))
         elif tree.data.literal_type == ASTLiteral.FLOAT_LITERAL:
-            return Constant(float(code[tree.token.start : tree.token.end]))
+            tree.data.type = Type(builtin=BuiltInTypes.FLOAT_TYPE)
+            return FloatConstant(float(code[tree.token.start : tree.token.end]))
         elif tree.data.literal_type == ASTLiteral.CHAR_LITERAL:
-            return Constant(code[tree.token.start + 1 : tree.token.end - 1])
+            tree.data.type = Type(builtin=BuiltInTypes.CHAR_TYPE)
+            return CharConstant(code[tree.token.start + 1 : tree.token.end - 1])
         elif tree.data.literal_type == ASTLiteral.STRING_LITERAL:
-            return Constant(code[tree.token.start + 1 : tree.token.end - 1])
+            tree.data.type = Type(builtin=BuiltInTypes.STRING_TYPE)
+            return StringConstant(code[tree.token.start + 1 : tree.token.end - 1])
         assert False
 
     def reference(scope: Scope, name: str) -> Symbol:
