@@ -1329,33 +1329,33 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
                     operand_expr.value *= -1.0
                 return operand_expr
             if operand.data.type.builtin in num_types:
-                return builder.sub(Zero, operand_expr)  # type: ignore
+                return cast(ir.Value, builder.sub(Zero, operand_expr))
             elif operand.data.type.builtin == BuiltInTypes.FLOAT_TYPE:
-                return builder.fneg(operand_expr)  # type: ignore
+                return cast(ir.Value, builder.fneg(operand_expr))
             assert False
         elif operator == ASTOperator.PRE_INCREMENT_OPERATOR:
             symbol = compileSymbol(operand, scope)
             assert symbol.ptr
-            increment: ir.Value = builder.add(builder.load(symbol.ptr), One)  # type: ignore
+            increment = cast(ir.Value, builder.add(builder.load(symbol.ptr), One))
             builder.store(increment, symbol.ptr)
             return increment
         elif operator == ASTOperator.PRE_DECREMENT_OPERATOR:
             symbol = compileSymbol(operand, scope)
             assert symbol.ptr
-            decrement: ir.Value = builder.sub(builder.load(symbol.ptr), One)  # type: ignore
+            decrement = cast(ir.Value, builder.sub(builder.load(symbol.ptr), One))
             builder.store(decrement, symbol.ptr)
             return decrement
 
         elif operator == ASTOperator.POST_INCREMENT_OPERATOR:
             symbol = compileSymbol(operand, scope)
             assert symbol.ptr
-            increment: ir.Value = builder.add(builder.load(symbol.ptr), One)  # type: ignore
+            increment = cast(ir.Value, builder.add(builder.load(symbol.ptr), One))
             builder.store(increment, symbol.ptr)
             return operand_expr
         elif operator == ASTOperator.POST_DECREMENT_OPERATOR:
             symbol = compileSymbol(operand, scope)
             assert symbol.ptr
-            decrement: ir.Value = builder.sub(builder.load(symbol.ptr), One)  # type: ignore
+            decrement = cast(ir.Value, builder.sub(builder.load(symbol.ptr), One))
             builder.store(decrement, symbol.ptr)
             return operand_expr
 
@@ -1364,7 +1364,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
                 assert isinstance(operand_expr, BoolConstant)
                 operand_expr.value = not operand_expr.value
                 return operand_expr
-            return builder.not_(operand_expr)  # type: ignore
+            return cast(ir.Value, builder.not_(operand_expr))
         assert False
 
     def compileFunctionCall(
