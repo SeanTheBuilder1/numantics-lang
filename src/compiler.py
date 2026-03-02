@@ -1360,6 +1360,12 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
             return operand_expr
 
         elif operator == ASTOperator.NOT_OPERATOR:
+            operand_expr = castType(
+                operand_expr,
+                Type(builtin=BuiltInTypes.BOOL_TYPE),
+                operand.data.type,
+                builder,
+            )
             if isinstance(operand_expr, BaseConstant):
                 assert isinstance(operand_expr, BoolConstant)
                 operand_expr.value = not operand_expr.value
