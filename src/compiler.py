@@ -22,6 +22,17 @@ from semantic_types import (
 )
 from unit_conversion_table import baked_multiple_conversion_table
 from unit_functions import createUnitOnlyType, unitConversionResultsInFloat
+from unit_tables import (
+    num_types,
+    int_types,
+    modifier_priority_table,
+    multiple_based_units,
+    area_to_distance,
+    volume_to_distance_and_area,
+    distance_to_area_and_volume,
+    area_to_distance_and_volume,
+    distance_to_area,
+)
 
 
 @dataclass
@@ -63,18 +74,6 @@ Constant = Union[IntConstant, FloatConstant, CharConstant, StringConstant, BoolC
 
 
 def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file: str):
-    num_types = [
-        BuiltInTypes.FLOAT_TYPE,
-        BuiltInTypes.INT_TYPE,
-        BuiltInTypes.CHAR_TYPE,
-        BuiltInTypes.BOOL_TYPE,
-    ]
-    int_types = [
-        BuiltInTypes.INT_TYPE,
-        BuiltInTypes.CHAR_TYPE,
-        BuiltInTypes.BOOL_TYPE,
-    ]
-
     module = ir.Module(name=filename)
     CharType = ir.IntType(8)
     StringType = ir.IntType(8).as_pointer()
