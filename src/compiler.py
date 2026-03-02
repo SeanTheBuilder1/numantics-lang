@@ -492,6 +492,15 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
             if isinstance(expr, BaseConstant):
                 expr = constantToIrConstant(expr, tree.data.expression.data.type)
 
+            if tree.data.expression.data.type.exclusive:
+                expr = convertToUnit(
+                    expr, name_data.symbol.type, tree.data.expression.data.type, builder
+                )
+                if unitConversionResultsInFloat(
+                    name_data.symbol.type, tree.data.expression.data.type
+                ):
+                    tree.data.expression.data.type.builtin = BuiltInTypes.FLOAT_TYPE
+
             expr = castType(
                 expr, name_data.symbol.type, tree.data.expression.data.type, builder
             )
