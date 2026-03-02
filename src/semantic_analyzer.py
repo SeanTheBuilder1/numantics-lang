@@ -387,10 +387,12 @@ def resolveFile(tree: ASTNode, code: str) -> tuple[Scope, bool]:
             nonFatalError("ERROR: Auto type declaration must have a derived type")
         if expr:
             if is_auto:
-                type = expr
+                type.modifiers = expr.modifiers
+                type.exclusive = expr.exclusive
                 tree.data.type = type
             elif not isTypeCastable(tree.data.type, expr):
                 nonFatalError(f"ERROR: Declared type {type} is not castable to {expr}")
+
         symbol = Symbol(name=name, type=type, scope=scope)
         tree.data.name.data.symbol = symbol
         define(scope, name, symbol)
