@@ -2,6 +2,7 @@ import sys
 import json
 
 from ast_converter import convertCstToAst
+from compiler import compileFile
 from lexer_analyzer import analyzeSource
 from lexer_token import Token, TokenType
 from semantic_analyzer import resolveFile
@@ -56,9 +57,13 @@ def main():
         print(result.errors(code, line_starts))
         sys.exit(1)
     else:
-        print(result.pretty(code, line_starts, 4))
+        # print(result.pretty(code, line_starts, 4))
         ast = convertCstToAst(result)
         symbols, has_semantic_error = resolveFile(ast, code)
+        if has_semantic_error:
+            sys.exit(1)
+        ir_file: str | None = sys.argv[3] if len(sys.argv) == 4 else None
+        compileFile(ast, code, symbols, sys.argv[1], ir_file)
 
 
 if __name__ == "__main__":

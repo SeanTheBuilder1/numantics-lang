@@ -73,7 +73,9 @@ class BoolConstant(BaseConstant):
 Constant = Union[IntConstant, FloatConstant, CharConstant, StringConstant, BoolConstant]
 
 
-def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file: str):
+def compileFile(
+    tree: ASTNode, code: str, scope: Scope, filename: str, dest_file: str | None
+):
     module = ir.Module(name=filename)
     CharType = ir.IntType(8)
     StringType = ir.IntType(8).as_pointer()
@@ -1708,7 +1710,8 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
         elif node.kind == ASTNodeType.DECLARATION:
             compileDeclaration(node, scope, builder, alloca_block)
 
-    file = open(dest_file, "w")
-    file.write(str(module))
-    file.close()
+    if dest_file:
+        file = open(dest_file, "w")
+        file.write(str(module))
+        file.close()
     return module
