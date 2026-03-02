@@ -79,9 +79,16 @@ class ModifierTypes(Enum):
 
 
 @dataclass
+class ExclusiveUnit:
+    unit: ModifierTypes
+    unit_class: ModifierClass
+
+
+@dataclass
 class Type:
     builtin: BuiltInTypes
     modifiers: list[ModifierTypes] = field(default_factory=list)
+    exclusive: ExclusiveUnit | None = None
 
 
 @dataclass
