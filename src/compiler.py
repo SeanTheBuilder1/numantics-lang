@@ -84,6 +84,7 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
     Zero = ir.Constant(IntType, 0)
     One = ir.Constant(IntType, 1)
     ZeroFloat = ir.Constant(FloatType, 0.0)
+    PercentScale = ir.Constant(FloatType, 0.01)
     str_counter = 0
 
     def compileStatement(
@@ -528,6 +529,788 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
             symbol = compileSymbol(tree, scope)
             assert symbol.ptr
             return builder.load(symbol.ptr)
+        assert False
+
+    def compileBinaryOp(
+        tree: ASTNode, scope: Scope, builder: ir.IRBuilder
+    ) -> ir.Value | Constant:
+        lhs = tree.data.lhs
+        rhs = tree.data.rhs
+        lhs_type: Type = lhs.data.type
+        rhs_type: Type = rhs.data.type
+        result_type: Type = tree.data.type
+        lhs_value = compileExpression(lhs, scope, builder)
+        rhs_value = compileExpression(rhs, scope, builder)
+        operator = tree.data.operator
+
+        if operator == ASTOperator.ADD_OPERATOR:
+            if (
+                lhs_type.builtin == BuiltInTypes.STRING_TYPE
+                and rhs_type.builtin == BuiltInTypes.STRING_TYPE
+            ):
+                print("WARN: string + concatenation not implemented yet")
+            elif lhs_type.builtin in num_types and rhs_type.builtin in num_types:
+                lhs_value = castType(lhs_value, result_type, lhs_type, builder)
+                rhs_value = castType(rhs_value, result_type, rhs_type, builder)
+
+            exclusive_class = (
+                result_type.exclusive.unit_class if result_type.exclusive else None
+            )
+            if not exclusive_class:
+                if result_type.builtin == BuiltInTypes.FLOAT_TYPE:
+                    return cast(ir.Value, builder.fadd(lhs_value, rhs_value))
+                else:
+                    return cast(ir.Value, builder.add(lhs_value, rhs_value))
+
+            unit_types = modifier_priority_table[exclusive_class]
+            target_unit = list(filter(lambda x: x in unit_types, result_type.modifiers))
+            target_unit_type = Type(
+                builtin=result_type.builtin,
+                modifiers=target_unit,
+                exclusive=ExclusiveUnit(
+                    unit=target_unit[0], unit_class=exclusive_class
+                ),
+            )
+
+            if lhs_type.exclusive and rhs_type.exclusive:
+                lhs_value = convertToUnit(
+                    lhs_value, target_unit_type, lhs_type, builder
+                )
+                rhs_value = convertToUnit(
+                    rhs_value, target_unit_type, rhs_type, builder
+                )
+
+            if result_type.builtin == BuiltInTypes.FLOAT_TYPE:
+                return cast(ir.Value, builder.fadd(lhs_value, rhs_value))
+            else:
+                return cast(ir.Value, builder.add(lhs_value, rhs_value))
+
+        elif operator == ASTOperator.SUB_OPERATOR:
+            if lhs_type.builtin in num_types and rhs_type.builtin in num_types:
+                lhs_value = castType(lhs_value, result_type, lhs_type, builder)
+                rhs_value = castType(rhs_value, result_type, rhs_type, builder)
+            exclusive_class = (
+                result_type.exclusive.unit_class if result_type.exclusive else None
+            )
+            if not exclusive_class:
+                if result_type.builtin == BuiltInTypes.FLOAT_TYPE:
+                    return cast(ir.Value, builder.fsub(lhs_value, rhs_value))
+                else:
+                    return cast(ir.Value, builder.sub(lhs_value, rhs_value))
+
+            unit_types = modifier_priority_table[exclusive_class]
+            target_unit = list(filter(lambda x: x in unit_types, result_type.modifiers))
+            target_unit_type = Type(
+                builtin=result_type.builtin,
+                modifiers=target_unit,
+                exclusive=ExclusiveUnit(
+                    unit=target_unit[0], unit_class=exclusive_class
+                ),
+            )
+
+            if lhs_type.exclusive and rhs_type.exclusive:
+                lhs_value = convertToUnit(
+                    lhs_value, target_unit_type, lhs_type, builder
+                )
+                rhs_value = convertToUnit(
+                    rhs_value, target_unit_type, rhs_type, builder
+                )
+
+            if result_type.builtin == BuiltInTypes.FLOAT_TYPE:
+                return cast(ir.Value, builder.fsub(lhs_value, rhs_value))
+            else:
+                return cast(ir.Value, builder.sub(lhs_value, rhs_value))
+
+        elif operator == ASTOperator.MULT_OPERATOR:
+            if lhs_type.builtin in num_types and rhs_type.builtin in num_types:
+                lhs_value = castType(lhs_value, result_type, lhs_type, builder)
+                rhs_value = castType(rhs_value, result_type, rhs_type, builder)
+            lhs_exclusive = (
+                lhs_type.exclusive.unit_class if lhs_type.exclusive else None
+            )
+            lhs_unit = lhs_type.exclusive.unit if lhs_type.exclusive else None
+            rhs_exclusive = (
+                rhs_type.exclusive.unit_class if rhs_type.exclusive else None
+            )
+            rhs_unit = rhs_type.exclusive.unit if rhs_type.exclusive else None
+            exclusive_class = (
+                result_type.exclusive.unit_class if result_type.exclusive else None
+            )
+            exclusive_unit = (
+                result_type.exclusive.unit if result_type.exclusive else None
+            )
+
+            if (
+                not exclusive_class
+                and lhs_exclusive != ModifierClass.PERCENT
+                and rhs_exclusive != ModifierClass.PERCENT
+            ):
+                if result_type.builtin == BuiltInTypes.FLOAT_TYPE:
+                    return cast(ir.Value, builder.fmul(lhs_value, rhs_value))
+                else:
+                    return cast(ir.Value, builder.mul(lhs_value, rhs_value))
+
+            elif (
+                lhs_exclusive == ModifierClass.VELOCITY
+                and rhs_exclusive == ModifierClass.TIME
+            ):
+                if lhs_unit == ModifierTypes.MPS_TYPE:
+                    rhs_value = convertToUnit(
+                        rhs_value,
+                        createUnitOnlyType(ModifierTypes.SECOND_TYPE),
+                        rhs_type,
+                        builder,
+                    )
+                elif lhs_unit == ModifierTypes.FPS_TYPE:
+                    rhs_value = convertToUnit(
+                        rhs_value,
+                        createUnitOnlyType(ModifierTypes.SECOND_TYPE),
+                        rhs_type,
+                        builder,
+                    )
+            elif (
+                lhs_exclusive == ModifierClass.TIME
+                and rhs_exclusive == ModifierClass.VELOCITY
+            ):
+                if rhs_unit == ModifierTypes.MPS_TYPE:
+                    lhs_value = convertToUnit(
+                        lhs_value,
+                        createUnitOnlyType(ModifierTypes.SECOND_TYPE),
+                        lhs_type,
+                        builder,
+                    )
+                elif rhs_unit == ModifierTypes.FPS_TYPE:
+                    lhs_value = convertToUnit(
+                        lhs_value,
+                        createUnitOnlyType(ModifierTypes.SECOND_TYPE),
+                        lhs_type,
+                        builder,
+                    )
+
+            elif (
+                lhs_exclusive == ModifierClass.ACCELERATION
+                and rhs_exclusive == ModifierClass.TIME
+            ):
+                if lhs_unit == ModifierTypes.MPS2_TYPE:
+                    rhs_value = convertToUnit(
+                        rhs_value,
+                        createUnitOnlyType(ModifierTypes.SECOND_TYPE),
+                        rhs_type,
+                        builder,
+                    )
+            elif (
+                lhs_exclusive == ModifierClass.TIME
+                and rhs_exclusive == ModifierClass.ACCELERATION
+            ):
+                if rhs_unit == ModifierTypes.MPS2_TYPE:
+                    lhs_value = convertToUnit(
+                        lhs_value,
+                        createUnitOnlyType(ModifierTypes.SECOND_TYPE),
+                        lhs_type,
+                        builder,
+                    )
+
+            elif (
+                lhs_exclusive == ModifierClass.PERCENT
+                and rhs_exclusive == ModifierClass.PERCENT
+            ):
+                pass
+            elif (
+                lhs_exclusive != ModifierClass.PERCENT
+                and rhs_exclusive == ModifierClass.PERCENT
+            ):
+                rhs_value = cast(
+                    ir.Value,
+                    builder.fmul(rhs_value, PercentScale),
+                )
+            elif (
+                lhs_exclusive == ModifierClass.PERCENT
+                and rhs_exclusive != ModifierClass.PERCENT
+            ):
+                lhs_value = cast(
+                    ir.Value,
+                    builder.fmul(lhs_value, PercentScale),
+                )
+
+            elif (
+                lhs_exclusive == ModifierClass.DISTANCE
+                and rhs_exclusive == ModifierClass.DISTANCE
+            ):
+                assert exclusive_unit
+                distance_type = area_to_distance[exclusive_unit]
+                lhs_value = convertToUnit(
+                    lhs_value, createUnitOnlyType(distance_type), lhs_type, builder
+                )
+                rhs_value = convertToUnit(
+                    rhs_value, createUnitOnlyType(distance_type), rhs_type, builder
+                )
+
+            elif (
+                lhs_exclusive == ModifierClass.DISTANCE
+                and rhs_exclusive == ModifierClass.AREA
+            ):
+                assert exclusive_unit
+                distance_type, area_type = volume_to_distance_and_area[exclusive_unit]
+                lhs_value = convertToUnit(
+                    lhs_value, createUnitOnlyType(distance_type), lhs_type, builder
+                )
+                rhs_value = convertToUnit(
+                    rhs_value, createUnitOnlyType(area_type), rhs_type, builder
+                )
+            elif (
+                lhs_exclusive == ModifierClass.AREA
+                and rhs_exclusive == ModifierClass.DISTANCE
+            ):
+                assert exclusive_unit
+                distance_type, area_type = volume_to_distance_and_area[exclusive_unit]
+                lhs_value = convertToUnit(
+                    lhs_value, createUnitOnlyType(area_type), lhs_type, builder
+                )
+                rhs_value = convertToUnit(
+                    rhs_value, createUnitOnlyType(distance_type), rhs_type, builder
+                )
+
+            elif (
+                lhs_exclusive == ModifierClass.MASS
+                and rhs_exclusive == ModifierClass.ACCELERATION
+            ):
+                lhs_value = convertToUnit(
+                    lhs_value,
+                    createUnitOnlyType(ModifierTypes.KG_TYPE),
+                    lhs_type,
+                    builder,
+                )
+                rhs_value = convertToUnit(
+                    rhs_value,
+                    createUnitOnlyType(ModifierTypes.MPS2_TYPE),
+                    rhs_type,
+                    builder,
+                )
+            elif (
+                lhs_exclusive == ModifierClass.ACCELERATION
+                and rhs_exclusive == ModifierClass.MASS
+            ):
+                lhs_value = convertToUnit(
+                    lhs_value,
+                    createUnitOnlyType(ModifierTypes.MPS2_TYPE),
+                    lhs_type,
+                    builder,
+                )
+                rhs_value = convertToUnit(
+                    rhs_value,
+                    createUnitOnlyType(ModifierTypes.KG_TYPE),
+                    rhs_type,
+                    builder,
+                )
+
+            if result_type.builtin == BuiltInTypes.FLOAT_TYPE:
+                return cast(ir.Value, builder.fmul(lhs_value, rhs_value))
+            else:
+                return cast(ir.Value, builder.mul(lhs_value, rhs_value))
+
+        elif operator == ASTOperator.DIV_OPERATOR:
+            if lhs_type.builtin in num_types and rhs_type.builtin in num_types:
+                lhs_value = castType(lhs_value, result_type, lhs_type, builder)
+                rhs_value = castType(rhs_value, result_type, rhs_type, builder)
+            lhs_exclusive = (
+                lhs_type.exclusive.unit_class if lhs_type.exclusive else None
+            )
+            lhs_unit = lhs_type.exclusive.unit if lhs_type.exclusive else None
+            rhs_exclusive = (
+                rhs_type.exclusive.unit_class if rhs_type.exclusive else None
+            )
+            rhs_unit = rhs_type.exclusive.unit if rhs_type.exclusive else None
+            exclusive_class = (
+                result_type.exclusive.unit_class if result_type.exclusive else None
+            )
+            exclusive_unit = (
+                result_type.exclusive.unit if result_type.exclusive else None
+            )
+
+            if lhs_exclusive and not rhs_exclusive:
+                pass
+
+            elif (
+                lhs_exclusive == ModifierClass.PERCENT
+                and rhs_exclusive == ModifierClass.PERCENT
+            ):
+                pass
+
+            elif lhs_exclusive and rhs_exclusive and lhs_exclusive == rhs_exclusive:
+                for type in modifier_priority_table[lhs_exclusive]:
+                    if lhs_unit == type or rhs_unit == type:
+                        lhs_value = convertToUnit(
+                            lhs_value, createUnitOnlyType(type), lhs_type, builder
+                        )
+                        rhs_value = convertToUnit(
+                            rhs_value, createUnitOnlyType(type), rhs_type, builder
+                        )
+                        break
+
+            elif (
+                lhs_exclusive == ModifierClass.DISTANCE
+                and rhs_exclusive == ModifierClass.TIME
+            ):
+                assert lhs_unit and rhs_unit and exclusive_unit
+                target_velocity = exclusive_unit
+                if target_velocity == ModifierTypes.MPS_TYPE:
+                    lhs_value = convertToUnit(
+                        lhs_value,
+                        createUnitOnlyType(ModifierTypes.METER_TYPE),
+                        lhs_type,
+                        builder,
+                    )
+
+                elif target_velocity == ModifierTypes.FPS_TYPE:
+                    lhs_value = convertToUnit(
+                        lhs_value,
+                        createUnitOnlyType(ModifierTypes.FT_TYPE),
+                        lhs_type,
+                        builder,
+                    )
+
+                rhs_value = convertToUnit(
+                    rhs_value,
+                    createUnitOnlyType(ModifierTypes.SECOND_TYPE),
+                    rhs_type,
+                    builder,
+                )
+
+            elif (
+                lhs_exclusive == ModifierClass.VELOCITY
+                and rhs_exclusive == ModifierClass.TIME
+            ):
+                lhs_value = convertToUnit(
+                    lhs_value,
+                    createUnitOnlyType(ModifierTypes.MPS_TYPE),
+                    lhs_type,
+                    builder,
+                )
+                rhs_value = convertToUnit(
+                    rhs_value,
+                    createUnitOnlyType(ModifierTypes.SECOND_TYPE),
+                    rhs_type,
+                    builder,
+                )
+
+            elif (
+                lhs_exclusive == ModifierClass.FORCE
+                and rhs_exclusive == ModifierClass.MASS
+            ):
+                lhs_value = convertToUnit(
+                    lhs_value,
+                    createUnitOnlyType(ModifierTypes.NEWT_TYPE),
+                    lhs_type,
+                    builder,
+                )
+                rhs_value = convertToUnit(
+                    rhs_value,
+                    createUnitOnlyType(ModifierTypes.KG_TYPE),
+                    rhs_type,
+                    builder,
+                )
+
+            elif (
+                lhs_exclusive == ModifierClass.FORCE
+                and rhs_exclusive == ModifierClass.ACCELERATION
+            ):
+                lhs_value = convertToUnit(
+                    lhs_value,
+                    createUnitOnlyType(ModifierTypes.NEWT_TYPE),
+                    lhs_type,
+                    builder,
+                )
+                rhs_value = convertToUnit(
+                    rhs_value,
+                    createUnitOnlyType(ModifierTypes.MPS2_TYPE),
+                    rhs_type,
+                    builder,
+                )
+
+            elif (
+                lhs_exclusive == ModifierClass.VOLUME
+                and rhs_exclusive == ModifierClass.AREA
+            ):
+                assert exclusive_unit
+                area_type, volume_type = distance_to_area_and_volume[exclusive_unit]
+                lhs_value = convertToUnit(
+                    lhs_value, createUnitOnlyType(volume_type), lhs_type, builder
+                )
+                rhs_value = convertToUnit(
+                    rhs_value, createUnitOnlyType(area_type), rhs_type, builder
+                )
+
+            elif (
+                lhs_exclusive == ModifierClass.AREA
+                and rhs_exclusive == ModifierClass.DISTANCE
+            ):
+                assert exclusive_unit
+                area_type = distance_to_area[exclusive_unit]
+                distance_type = exclusive_unit
+                lhs_value = convertToUnit(
+                    lhs_value, createUnitOnlyType(area_type), lhs_type, builder
+                )
+                rhs_value = convertToUnit(
+                    rhs_value, createUnitOnlyType(distance_type), rhs_type, builder
+                )
+
+            elif (
+                lhs_exclusive == ModifierClass.VOLUME
+                and rhs_exclusive == ModifierClass.DISTANCE
+            ):
+                assert exclusive_unit
+                distance_type, volume_type = area_to_distance_and_volume[exclusive_unit]
+                lhs_value = convertToUnit(
+                    lhs_value, createUnitOnlyType(volume_type), lhs_type, builder
+                )
+                rhs_value = convertToUnit(
+                    rhs_value, createUnitOnlyType(distance_type), rhs_type, builder
+                )
+
+            if result_type.builtin == BuiltInTypes.FLOAT_TYPE:
+                return cast(ir.Value, builder.fdiv(lhs_value, rhs_value))
+            else:
+                return cast(ir.Value, builder.sdiv(lhs_value, rhs_value))
+
+        elif operator == ASTOperator.MOD_OPERATOR:
+            if lhs_type.builtin in num_types and rhs_type.builtin in num_types:
+                lhs_value = castType(lhs_value, result_type, lhs_type, builder)
+                rhs_value = castType(rhs_value, result_type, rhs_type, builder)
+
+            exclusive_class = (
+                result_type.exclusive.unit_class if result_type.exclusive else None
+            )
+            if not exclusive_class:
+                if result_type.builtin == BuiltInTypes.FLOAT_TYPE:
+                    return cast(ir.Value, builder.fadd(lhs_value, rhs_value))
+                else:
+                    return cast(ir.Value, builder.add(lhs_value, rhs_value))
+
+            unit_types = modifier_priority_table[exclusive_class]
+            target_unit = list(filter(lambda x: x in unit_types, result_type.modifiers))
+            target_unit_type = Type(
+                builtin=result_type.builtin,
+                modifiers=target_unit,
+                exclusive=ExclusiveUnit(
+                    unit=target_unit[0], unit_class=exclusive_class
+                ),
+            )
+
+            if lhs_type.exclusive and rhs_type.exclusive:
+                lhs_value = convertToUnit(
+                    lhs_value, target_unit_type, lhs_type, builder
+                )
+                rhs_value = convertToUnit(
+                    rhs_value, target_unit_type, rhs_type, builder
+                )
+
+            if result_type.builtin == BuiltInTypes.FLOAT_TYPE:
+                return cast(ir.Value, builder.frem(lhs_value, rhs_value))
+            else:
+                return cast(ir.Value, builder.srem(lhs_value, rhs_value))
+
+        elif operator == ASTOperator.EXP_OPERATOR:
+            if lhs_type.builtin in num_types and rhs_type.builtin in num_types:
+                lhs_value = castType(lhs_value, result_type, lhs_type, builder)
+                rhs_value = castType(rhs_value, result_type, rhs_type, builder)
+            exclusive_class = (
+                result_type.exclusive.unit_class if result_type.exclusive else None
+            )
+            if not exclusive_class:
+                if result_type.builtin == BuiltInTypes.FLOAT_TYPE:
+                    return cast(ir.Value, builder.fexp(lhs_value, rhs_value))
+                else:
+                    return cast(ir.Value, builder.exp(lhs_value, rhs_value))
+
+            assert False
+        elif operator in [
+            ASTOperator.NOT_EQUAL_OPERATOR,
+            ASTOperator.EQUAL_OPERATOR,
+        ]:
+            if (
+                lhs_type.builtin == BuiltInTypes.STRING_TYPE
+                and rhs_type.builtin == BuiltInTypes.STRING_TYPE
+            ):
+                print("WARN: string equality comparison not implemented yet")
+            comparison_to_llvm_comparison = {
+                ASTOperator.NOT_EQUAL_OPERATOR: "!=",
+                ASTOperator.EQUAL_OPERATOR: "==",
+            }
+            common_builtin = BuiltInTypes.INT_TYPE
+            for int_type in num_types:
+                if lhs_type.builtin == int_type or rhs_type.builtin == int_type:
+                    lhs_value = castType(
+                        lhs_value, Type(builtin=int_type), lhs_type, builder
+                    )
+                    rhs_value = castType(
+                        rhs_value, Type(builtin=int_type), rhs_type, builder
+                    )
+                    common_builtin = int_type
+
+            lhs_exclusive = (
+                lhs_type.exclusive.unit_class if lhs_type.exclusive else None
+            )
+            rhs_exclusive = (
+                rhs_type.exclusive.unit_class if rhs_type.exclusive else None
+            )
+
+            if not (lhs_exclusive and rhs_exclusive):
+                if common_builtin == BuiltInTypes.FLOAT_TYPE:
+                    return cast(
+                        ir.Value,
+                        builder.fcmp_ordered(
+                            comparison_to_llvm_comparison[operator],
+                            lhs_value,
+                            rhs_value,
+                        ),
+                    )
+                else:
+                    return cast(
+                        ir.Value,
+                        builder.icmp_signed(
+                            comparison_to_llvm_comparison[operator],
+                            lhs_value,
+                            rhs_value,
+                        ),
+                    )
+            if lhs_exclusive and rhs_exclusive:
+                assert lhs_type.exclusive and rhs_type.exclusive
+                for type in modifier_priority_table[lhs_exclusive]:
+                    if (
+                        type == lhs_type.exclusive.unit
+                        or type == rhs_type.exclusive.unit
+                    ):
+                        dest_type = (
+                            lhs_type if type == lhs_type.exclusive.unit else rhs_type
+                        )
+                        src_type = (
+                            rhs_type if type == lhs_type.exclusive.unit else lhs_type
+                        )
+                        if unitConversionResultsInFloat(dest_type, src_type):
+                            common_builtin = BuiltInTypes.FLOAT_TYPE
+                            lhs_value = castType(
+                                lhs_value,
+                                Type(builtin=BuiltInTypes.FLOAT_TYPE),
+                                lhs_type,
+                                builder,
+                            )
+                            rhs_value = castType(
+                                rhs_value,
+                                Type(builtin=BuiltInTypes.FLOAT_TYPE),
+                                rhs_type,
+                                builder,
+                            )
+
+                        lhs_value = convertToUnit(
+                            lhs_value, dest_type, lhs_type, builder
+                        )
+                        rhs_value = convertToUnit(
+                            rhs_value, dest_type, rhs_type, builder
+                        )
+                        break
+
+            if common_builtin == BuiltInTypes.FLOAT_TYPE:
+                return cast(
+                    ir.Value,
+                    builder.fcmp_ordered(
+                        comparison_to_llvm_comparison[operator],
+                        lhs_value,
+                        rhs_value,
+                    ),
+                )
+            else:
+                return cast(
+                    ir.Value,
+                    builder.icmp_signed(
+                        comparison_to_llvm_comparison[operator],
+                        lhs_value,
+                        rhs_value,
+                    ),
+                )
+        elif operator in [
+            ASTOperator.LESS_OPERATOR,
+            ASTOperator.LESS_OR_EQUAL_OPERATOR,
+            ASTOperator.GREATER_OPERATOR,
+            ASTOperator.GREATER_OR_EQUAL_OPERATOR,
+        ]:
+            comparison_to_llvm_comparison = {
+                ASTOperator.LESS_OPERATOR: "<",
+                ASTOperator.LESS_OR_EQUAL_OPERATOR: "<=",
+                ASTOperator.GREATER_OPERATOR: ">",
+                ASTOperator.GREATER_OR_EQUAL_OPERATOR: ">=",
+            }
+            common_builtin = BuiltInTypes.INT_TYPE
+            for int_type in num_types:
+                if lhs_type.builtin == int_type or rhs_type.builtin == int_type:
+                    lhs_value = castType(
+                        lhs_value, Type(builtin=int_type), lhs_type, builder
+                    )
+                    rhs_value = castType(
+                        rhs_value, Type(builtin=int_type), rhs_type, builder
+                    )
+                    common_builtin = int_type
+
+            lhs_exclusive = (
+                lhs_type.exclusive.unit_class if lhs_type.exclusive else None
+            )
+            rhs_exclusive = (
+                rhs_type.exclusive.unit_class if rhs_type.exclusive else None
+            )
+
+            if not (lhs_exclusive and rhs_exclusive):
+                if common_builtin == BuiltInTypes.FLOAT_TYPE:
+                    return cast(
+                        ir.Value,
+                        builder.fcmp_ordered(
+                            comparison_to_llvm_comparison[operator],
+                            lhs_value,
+                            rhs_value,
+                        ),
+                    )
+                else:
+                    return cast(
+                        ir.Value,
+                        builder.icmp_signed(
+                            comparison_to_llvm_comparison[operator],
+                            lhs_value,
+                            rhs_value,
+                        ),
+                    )
+
+            if lhs_exclusive and rhs_exclusive:
+                assert lhs_type.exclusive and rhs_type.exclusive
+                for type in modifier_priority_table[lhs_exclusive]:
+                    if (
+                        type == lhs_type.exclusive.unit
+                        or type == rhs_type.exclusive.unit
+                    ):
+                        dest_type = (
+                            lhs_type if type == lhs_type.exclusive.unit else rhs_type
+                        )
+                        src_type = (
+                            rhs_type if type == lhs_type.exclusive.unit else lhs_type
+                        )
+                        if unitConversionResultsInFloat(dest_type, src_type):
+                            common_builtin = BuiltInTypes.FLOAT_TYPE
+                            lhs_value = castType(
+                                lhs_value,
+                                Type(builtin=BuiltInTypes.FLOAT_TYPE),
+                                lhs_type,
+                                builder,
+                            )
+                            rhs_value = castType(
+                                rhs_value,
+                                Type(builtin=BuiltInTypes.FLOAT_TYPE),
+                                rhs_type,
+                                builder,
+                            )
+
+                        lhs_value = convertToUnit(
+                            lhs_value, dest_type, lhs_type, builder
+                        )
+                        rhs_value = convertToUnit(
+                            rhs_value, dest_type, rhs_type, builder
+                        )
+                        break
+
+            if common_builtin == BuiltInTypes.FLOAT_TYPE:
+                return cast(
+                    ir.Value,
+                    builder.fcmp_ordered(
+                        comparison_to_llvm_comparison[operator],
+                        lhs_value,
+                        rhs_value,
+                    ),
+                )
+            else:
+                return cast(
+                    ir.Value,
+                    builder.icmp_signed(
+                        comparison_to_llvm_comparison[operator],
+                        lhs_value,
+                        rhs_value,
+                    ),
+                )
+
+        elif operator == ASTOperator.AND_OPERATOR:
+            lhs_value = castType(
+                lhs_value, Type(builtin=BuiltInTypes.BOOL_TYPE), lhs_type, builder
+            )
+            rhs_value = castType(
+                rhs_value, Type(builtin=BuiltInTypes.BOOL_TYPE), rhs_type, builder
+            )
+            return cast(ir.Value, builder.and_(lhs_value, rhs_value))
+        elif operator == ASTOperator.OR_OPERATOR:
+            if isinstance(lhs_value, BaseConstant):
+                lhs_value = constantToIrConstant(lhs_value, lhs_type)
+            if isinstance(rhs_value, BaseConstant):
+                rhs_value = constantToIrConstant(rhs_value, rhs_type)
+            lhs_value = castType(
+                lhs_value, Type(builtin=BuiltInTypes.BOOL_TYPE), lhs_type, builder
+            )
+            rhs_value = castType(
+                rhs_value, Type(builtin=BuiltInTypes.BOOL_TYPE), rhs_type, builder
+            )
+            return cast(ir.Value, builder.or_(lhs_value, rhs_value))
+        elif operator == ASTOperator.ASSIGNMENT_OPERATOR:
+            symbol = compileSymbol(lhs, scope)
+            assert isinstance(symbol.type, Type)
+            assert symbol.ptr
+            if isinstance(rhs_value, BaseConstant):
+                rhs_value = constantToIrConstant(rhs_value, rhs.data.type)
+
+            if rhs.data.type.exclusive:
+                rhs_value = convertToUnit(
+                    rhs_value, symbol.type, rhs.data.type, builder
+                )
+                if unitConversionResultsInFloat(symbol.type, rhs.data.type):
+                    rhs.data.type.builtin = BuiltInTypes.FLOAT_TYPE
+            rhs_value = castType(rhs_value, symbol.type, rhs.data.type, builder)
+            builder.store(rhs_value, symbol.ptr)
+            return rhs_value
+
+        elif operator in [
+            ASTOperator.PLUS_ASSIGNMENT_OPERATOR,
+            ASTOperator.MINUS_ASSIGNMENT_OPERATOR,
+            ASTOperator.MULTIPLY_ASSIGNMENT_OPERATOR,
+            ASTOperator.DIVIDE_ASSIGNMENT_OPERATOR,
+            ASTOperator.MODULO_ASSIGNMENT_OPERATOR,
+        ]:
+            assert False
+        elif operator in [
+            ASTOperator.PERCENT_SCALE_OPERATOR,
+            ASTOperator.MARKUP_OPERATOR,
+            ASTOperator.MARKDOWN_OPERATOR,
+        ]:
+            if lhs_type.builtin in num_types and rhs_type.builtin in num_types:
+                lhs_value = castType(lhs_value, result_type, lhs_type, builder)
+                rhs_value = castType(rhs_value, result_type, rhs_type, builder)
+            lhs_exclusive = (
+                lhs_type.exclusive.unit_class if lhs_type.exclusive else None
+            )
+            lhs_unit = lhs_type.exclusive.unit if lhs_type.exclusive else None
+            rhs_exclusive = (
+                rhs_type.exclusive.unit_class if rhs_type.exclusive else None
+            )
+            rhs_unit = rhs_type.exclusive.unit if rhs_type.exclusive else None
+            exclusive_class = (
+                result_type.exclusive.unit_class if result_type.exclusive else None
+            )
+            exclusive_unit = (
+                result_type.exclusive.unit if result_type.exclusive else None
+            )
+
+            if operator == ASTOperator.PERCENT_SCALE_OPERATOR:
+                scale = cast(ir.Value, builder.fmul(rhs_value, PercentScale))
+                return cast(ir.Value, builder.fmul(lhs_value, scale))
+            elif operator == ASTOperator.MARKUP_OPERATOR:
+                scale = cast(ir.Value, builder.fmul(rhs_value, PercentScale))
+                markup = cast(ir.Value, builder.fmul(lhs_value, scale))
+                return cast(ir.Value, builder.fadd(scale, markup))
+            elif operator == ASTOperator.MARKDOWN_OPERATOR:
+                scale = cast(ir.Value, builder.fmul(rhs_value, PercentScale))
+                markdown = cast(ir.Value, builder.fmul(lhs_value, scale))
+                return cast(ir.Value, builder.fsub(scale, markdown))
         assert False
 
     def compileUnaryOp(
