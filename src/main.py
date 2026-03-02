@@ -4,7 +4,6 @@ import json
 from ast_converter import convertCstToAst
 from lexer_analyzer import analyzeSource
 from lexer_token import Token, TokenType
-from syntax_analyzer import NodeType, parseFile
 from semantic_analyzer import resolveFile
 from syntax_analyzer import parseFile
 from line_starts import build_line_starts, index_to_line_col_batch
@@ -52,14 +51,10 @@ def main():
 
     tokens = list(filter(filterTokens, tokens))
     result, has_error = parseFile(tokens)
-    for i in result.children:
-        if i.kind == NodeType.ERROR:
-            print(i)
-            start_line, start_col = index_to_line_col_batch(i.token.start, line_starts)
-            print(f"{start_line}:{start_col}")
     if has_error:
-        print(result.pretty(code, line_starts, 4))
+        # print(result.pretty(code, line_starts, 4))
         print(result.errors(code, line_starts))
+        sys.exit(1)
     else:
         print(result.pretty(code, line_starts, 4))
         ast = convertCstToAst(result)
