@@ -632,6 +632,11 @@ def compileFile(tree: ASTNode, code: str, scope: Scope, filename: str, dest_file
             top_scope = top_scope.parent_scope
         assert False
 
+    def compileSymbol(tree: ASTNode, scope: Scope) -> Symbol:
+        name = compileIdentifier(tree)
+        symbol = reference(scope, name)
+        return symbol
+
     def toBool(
         value: ir.Value | Constant, type: Type, builder: ir.IRBuilder
     ) -> ir.Value | Constant:
